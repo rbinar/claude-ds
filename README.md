@@ -26,7 +26,17 @@ Komutları **tek tek, sırayla** çalıştır — hepsini aynı anda yapıştır
 
 > Format `plugin-adı@marketplace-adı` şeklindedir; her ikisi de `claude-ds` olduğu için isim tekrar eder, bu normaldir.
 
-**3. Adım — Kurulumu çalıştır** (plugin kurulduktan sonra):
+**3. Adım — Plugin'i etkinleştir:**
+
+Install çıktısı `Run /reload-plugins to apply` der. Komutların (`/claude-ds:*`) tanınması için bu adım zorunludur:
+
+```text
+/reload-plugins
+```
+
+> Reload sonrası hâlâ "Unknown command: /claude-ds:setup" alıyorsan, Claude Code'u tamamen kapatıp yeniden aç. `/plugin` komutuyla `claude-ds`'in yüklü ve **enabled** olduğunu doğrulayabilirsin.
+
+**4. Adım — Kurulumu çalıştır** (plugin etkinleştikten sonra):
 
 ```text
 /claude-ds:setup

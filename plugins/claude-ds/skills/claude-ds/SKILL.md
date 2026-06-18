@@ -26,6 +26,7 @@ Claude Code CLI'ı DeepSeek'in Anthropic-uyumlu API'siyle çalıştırır. PATH'
 ## Çalıştırma kuralları
 - **Her zaman background task** olarak çalıştır: Bash tool `run_in_background: true` (bloklamasın).
 - **Uzun prompt** için brief'i dosyaya yaz, `-p "$(cat <brieffile>)"` ile geçir.
+- **Windows:** kurulumdan sonra `claude-ds` yine doğrudan çağrılır (`.cmd` shim sayesinde); worktree helper'ın PowerShell varyantı `ds-worktree-run.ps1` symlink yerine junction kullanır. macOS/Linux/WSL'de `.sh` varyantları geçerli.
 
 ### Mod 1 — Üretim (dosya yazmaz; kod/metin/analiz üretir)
 ```bash

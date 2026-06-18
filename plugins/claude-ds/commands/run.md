@@ -12,10 +12,15 @@ Delege edilecek görev: **$ARGUMENTS**
 
 **Gerçek repo görevi** ise (dosya değişikliği gerekiyorsa) — izole worktree kullan:
 1. Görevi bir brief dosyasına yaz (örn. `/tmp/ds-brief.txt`).
-2. Çalıştır (background task):
-   ```bash
-   "${CLAUDE_PLUGIN_ROOT}/scripts/ds-worktree-run.sh" <repo-path> <branch-adi> /tmp/ds-brief.txt
-   ```
+2. Çalıştır (background task) — OS'a göre:
+   - **macOS / Linux / WSL**:
+     ```bash
+     "${CLAUDE_PLUGIN_ROOT}/scripts/ds-worktree-run.sh" <repo-path> <branch-adi> /tmp/ds-brief.txt
+     ```
+   - **Native Windows** (node_modules için symlink yerine junction kullanır):
+     ```powershell
+     powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/ds-worktree-run.ps1" <repo-path> <branch-adi> <brief-file>
+     ```
 3. Script bittiğinde worktree'deki diff'i **incele** (`git -C <worktree> diff`), bağımsız doğrula (tsc/build/test).
 4. Sorun yoksa git/commit/push/PR/merge'i **sen** yap; sonra worktree'yi temizle.
 

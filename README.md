@@ -41,6 +41,16 @@ claude-ds -p "Write a Python one-liner for fib(n)"
 plugins/claude-ds/scripts/ds-worktree-run.sh <repo> <branch> <brief-file>
 ```
 
+## Windows
+
+Native Windows'ta (WSL kullanmıyorsan) PowerShell varyantları devreye girer:
+
+- `/claude-ds:setup` → `install.ps1` çalışır: `claude-ds.ps1` + bir `claude-ds.cmd` shim'i `~/.local/bin`'e kurar (böylece `claude-ds` cmd/PowerShell'den çağrılır), config'i `~/.config/claude-ds/config`'e yazar.
+- Repo görevleri: `ds-worktree-run.ps1` — `node_modules` için symlink yerine **junction** (`New-Item -ItemType Junction`; admin/developer-mode gerektirmez) kullanır.
+- WSL ya da Git Bash varsa Unix `.sh` scriptleri de çalışır.
+
+Gereksinim: PowerShell 5.1+ veya pwsh 7+, ve `claude` CLI PATH'te.
+
 ## Güvenlik ve veri
 
 - **API key makineden çıkmaz:** key `~/.config/claude-ds/config` içinde (0600, repo dışında) tutulur ve **asla commit edilmez**. Plugin/skill key'i hiçbir yere yazmaz; sen eklersin.

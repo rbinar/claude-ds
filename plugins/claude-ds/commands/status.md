@@ -18,4 +18,13 @@ fi
 command -v claude >/dev/null 2>&1 && echo "claude CLI: bulundu" || echo "claude CLI: YOK"
 ```
 
+**Native Windows** (PowerShell eşdeğeri):
+
+```powershell
+if (Get-Command claude-ds -ErrorAction SilentlyContinue) { 'wrapper: kurulu' } else { 'wrapper: YOK' }
+$cfg = Join-Path $HOME '.config/claude-ds/config'
+if (Test-Path $cfg) { if ((Get-Content $cfg -Raw) -match 'DEEPSEEK_API_KEY="..*"') { 'key: set' } else { 'key: MISSING' } } else { 'config: YOK' }
+if (Get-Command claude -ErrorAction SilentlyContinue) { 'claude CLI: bulundu' } else { 'claude CLI: YOK' }
+```
+
 Hepsi tamamsa opsiyonel smoke test öner (background task): `claude-ds -p "Reply with exactly: OK"`.

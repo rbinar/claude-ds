@@ -7,11 +7,16 @@ allowed-tools: Bash
 
 Aşağıdaki adımları uygula:
 
-1. Wrapper'ı kur:
-   ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/install.sh"
-   ```
-   Bu, `~/.local/bin/claude-ds`'i kurar ve yoksa `~/.config/claude-ds/config` iskeletini (0600) oluşturur.
+1. Wrapper'ı kur — işletim sistemine göre:
+   - **macOS / Linux / WSL / Git Bash** (bash mevcut):
+     ```bash
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/install.sh"
+     ```
+   - **Native Windows** (PowerShell):
+     ```powershell
+     powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/install.ps1"
+     ```
+   İkisi de `~/.local/bin`'e wrapper'ı kurar (Windows'ta `claude-ds.ps1` + `claude-ds.cmd` shim) ve yoksa `~/.config/claude-ds/config` iskeletini oluşturur. OS'u tespit edip uygun olanı çalıştır.
 
 2. **API key'i kullanıcı kendisi eklemeli.** Kullanıcıdan DeepSeek API key'ini
    `~/.config/claude-ds/config` içindeki `DEEPSEEK_API_KEY=""` satırına eklemesini iste.

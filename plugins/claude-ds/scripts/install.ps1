@@ -29,6 +29,17 @@ DS_FLASH_MODEL="deepseek-v4-flash"
   Write-Host "Config already exists -> $Config (left untouched)"
 }
 
+# Open the config so the user can paste their key — only while the key is still
+# empty. Best-effort: never fail the install if opening doesn't work.
+# Override the opener via $env:CLAUDE_DS_EDITOR (e.g. "code").
+if ((Get-Content $Config -Raw) -match 'DEEPSEEK_API_KEY=""') {
+  try {
+    if ($env:CLAUDE_DS_EDITOR) { Start-Process $env:CLAUDE_DS_EDITOR $Config }
+    else { Start-Process notepad $Config }
+    Write-Host "Opened config in editor -> add your key, then save."
+  } catch { }
+}
+
 $inPath = ($env:PATH -split ';') -contains $BinDir
 if (-not $inPath) { Write-Host "WARNING: $BinDir is not in PATH. Add it (e.g. via 'setx PATH ...' or System settings)." }
 

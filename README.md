@@ -42,7 +42,7 @@ Install çıktısı `Run /reload-plugins to apply` der. Komutların (`/claude-ds
 /claude-ds:setup
 ```
 
-`/claude-ds:setup` wrapper'ı `~/.local/bin/claude-ds`'e kurar ve `~/.config/claude-ds/config` iskeletini oluşturur. Sonra DeepSeek API key'ini bu dosyaya **kendin** ekle:
+`/claude-ds:setup` wrapper'ı `~/.local/bin/claude-ds`'e kurar ve `~/.config/claude-ds/config` iskeletini oluşturur. Key hâlâ boşsa setup config dosyasını **platformun varsayılan editöründe otomatik açar** (macOS `open`, Linux `xdg-open`, WSL `explorer.exe`, Windows `notepad`). Açılan dosyada DeepSeek API key'ini **kendin** ekle:
 
 ```bash
 # ~/.config/claude-ds/config
@@ -50,6 +50,8 @@ DEEPSEEK_API_KEY="sk-..."     # kendi DeepSeek key'in
 DS_MODEL="deepseek-v4-pro"
 DS_FLASH_MODEL="deepseek-v4-flash"
 ```
+
+> Farklı bir editör istiyorsan `CLAUDE_DS_EDITOR` ortam değişkenini ayarla (ör. `CLAUDE_DS_EDITOR="code"`). Otomatik açma başarısız olursa dosyayı elle aç: `${EDITOR:-nano} ~/.config/claude-ds/config`.
 
 Gereksinim: `claude` CLI kurulu ve `~/.local/bin` PATH'te olmalı. DeepSeek key'i: https://platform.deepseek.com/api_keys
 
@@ -80,6 +82,44 @@ Native Windows'ta (WSL kullanmıyorsan) PowerShell varyantları devreye girer:
 - WSL ya da Git Bash varsa Unix `.sh` scriptleri de çalışır.
 
 Gereksinim: PowerShell 5.1+ veya pwsh 7+, ve `claude` CLI PATH'te.
+
+## Kaldırma (Uninstall)
+
+Tam temizlik için sırayla: (1) plugin'i kaldır, (2) wrapper + config dosyalarını sil, (3) varsa geçici worktree'leri temizle.
+
+**1. Adım — Plugin'i ve marketplace'i kaldır** (Claude Code CLI içinden):
+
+```text
+/plugin uninstall claude-ds@claude-ds
+/plugin marketplace remove claude-ds
+/reload-plugins
+```
+
+**2. Adım — Wrapper ve config dosyalarını sil:**
+
+```bash
+# macOS / Linux / WSL / Git Bash
+rm -f  ~/.local/bin/claude-ds
+rm -rf ~/.config/claude-ds          # config (API key dahil) burada — silinince key de gider
+```
+
+```powershell
+# Native Windows (PowerShell)
+Remove-Item -Force  "$HOME\.local\bin\claude-ds.ps1","$HOME\.local\bin\claude-ds.cmd" -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force "$HOME\.config\claude-ds" -ErrorAction SilentlyContinue
+```
+
+**3. Adım — (Opsiyonel) geçici worktree'leri temizle:**
+
+`/claude-ds:run` veya `ds-worktree-run.sh` kullandıysan ayrı git worktree'ler kalmış olabilir. İlgili repoda kontrol et:
+
+```bash
+git worktree list          # claude-ds'in açtığı worktree'leri gör
+git worktree remove <yol>  # gereksizleri kaldır
+git worktree prune         # ölü kayıtları temizle
+```
+
+> Not: PATH'e `~/.local/bin`'i bu plugin için elle eklediysen ve başka bir şey kullanmıyorsan, shell profilinden (`~/.zshrc`, `~/.bashrc` vb.) o satırı da kaldırabilirsin. DeepSeek hesabındaki API key'i iptal etmek istersen https://platform.deepseek.com/api_keys üzerinden sil.
 
 ## Güvenlik ve veri
 

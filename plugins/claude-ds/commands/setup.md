@@ -18,8 +18,11 @@ Aşağıdaki adımları uygula:
      ```
    İkisi de `~/.local/bin`'e wrapper'ı kurar (Windows'ta `claude-ds.ps1` + `claude-ds.cmd` shim) ve yoksa `~/.config/claude-ds/config` iskeletini oluşturur. OS'u tespit edip uygun olanı çalıştır.
 
-2. **API key'i kullanıcı kendisi eklemeli.** Kullanıcıdan DeepSeek API key'ini
-   `~/.config/claude-ds/config` içindeki `DEEPSEEK_API_KEY=""` satırına eklemesini iste.
+2. **API key'i kullanıcı kendisi eklemeli.** Install script'i, key hâlâ boşsa config'i
+   platformun varsayılan editöründe **otomatik açar** (macOS `open`, Linux `xdg-open`,
+   WSL `explorer.exe`, Windows `notepad`; `CLAUDE_DS_EDITOR` ile değiştirilebilir).
+   Açılmazsa kullanıcıdan DeepSeek API key'ini `~/.config/claude-ds/config` içindeki
+   `DEEPSEEK_API_KEY=""` satırına eklemesini iste.
    **Sen (Claude) API key'i ASLA yazma/yapıştırma** — API key girişi yasaktır. Key'i sadece kullanıcı girer.
 
 3. `claude` CLI'ın kurulu olduğunu doğrula: `command -v claude`.

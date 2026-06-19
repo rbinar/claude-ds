@@ -7,8 +7,13 @@
 # final text to stdout.
 #
 # Usage:
-#   claude-ds-stream [--cwd <dir>] [--resume <id>] [--read-only] -p "<prompt>" [extra claude flags]
+#   claude-ds-stream [--cwd <dir>] [--resume <id>] [--read-only] \
+#                    [--max-runtime <s>] [--idle-timeout <s>] -p "<prompt>" [extra claude flags]
 #   echo "<prompt>" | claude-ds-stream [--cwd <dir>]
+#
+# --max-runtime <s>   kill the worker after <s> seconds total (0 = off, default)
+# --idle-timeout <s>  kill the worker after <s> seconds with no new output (0 = off)
+#   (env fallbacks: CLAUDE_DS_MAX_RUNTIME, CLAUDE_DS_IDLE_TIMEOUT)
 #
 # NOTE: by default the worker runs with --permission-mode bypassPermissions (the CLI
 # can't prompt in non-interactive --print mode), so it CAN write files and run bash
@@ -55,6 +60,8 @@ RESUME_ID=""
 PROMPT=""
 HAVE_PROMPT=0
 READ_ONLY=0
+MAX_RUNTIME="${CLAUDE_DS_MAX_RUNTIME:-0}"     # seconds; 0 = no overall runtime cap
+IDLE_TIMEOUT="${CLAUDE_DS_IDLE_TIMEOUT:-0}"   # seconds; 0 = no idle (no-output) cap
 PASS_ARGS=()
 # A value-consuming flag at the end of argv would read an unset $2 under `set -u`
 # and crash cryptically; guard each with a $# check for a friendly message.
@@ -69,6 +76,10 @@ while [ "$#" -gt 0 ]; do
     -p=*)         PROMPT="${1#*=}"; HAVE_PROMPT=1; shift;;
     --prompt=*)   PROMPT="${1#*=}"; HAVE_PROMPT=1; shift;;
     --read-only)  READ_ONLY=1; shift;;
+    --max-runtime)    need_val --max-runtime "$#";  MAX_RUNTIME="$2"; shift 2;;
+    --max-runtime=*)  MAX_RUNTIME="${1#*=}"; shift;;
+    --idle-timeout)   need_val --idle-timeout "$#"; IDLE_TIMEOUT="$2"; shift 2;;
+    --idle-timeout=*) IDLE_TIMEOUT="${1#*=}"; shift;;
     *)            PASS_ARGS+=("$1"); shift;;
   esac
 done
@@ -82,6 +93,10 @@ if [ "$HAVE_PROMPT" -eq 0 ]; then
     exit 1
   fi
 fi
+
+# Coerce non-integer timeout values to 0 (off) so `[ "$X" -gt 0 ]` can't crash under set -e.
+case "$MAX_RUNTIME"  in ''|*[!0-9]*) MAX_RUNTIME=0;;  esac
+case "$IDLE_TIMEOUT" in ''|*[!0-9]*) IDLE_TIMEOUT=0;; esac
 
 # ---- prepare the session directory ----
 SESSIONS_ROOT="${CLAUDE_DS_SESSIONS_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claude-ds/sessions}"
@@ -136,20 +151,71 @@ if [ "${#PASS_ARGS[@]}" -gt 0 ]; then
   CLAUDE_ARGS+=("${PASS_ARGS[@]}")
 fi
 
-# The prompt is passed via stdin (so variadic flags can't swallow it — octo-ai note).
-# claude runs in a subshell cd'd into $CWD so its process working directory is the
-# target dir (not just --add-dir allow-listed) — relative work lands there, matching
-# octo-ai's spawn({ cwd }). Without this, claude writes into the wrapper's cwd.
+# Optional safety net: a background watchdog kills the worker if it exceeds the overall
+# runtime cap or stalls with no new output. Activity = transcript.jsonl mtime (the parser
+# appends every event there). claude is backgrounded inside the subshell so we can record
+# its PID; the subshell still cd's into $CWD and exits with claude's exit code.
+PIDFILE="$SESSION_DIR/.claude.pid"
+TIMEOUT_FILE="$SESSION_DIR/.timeout"
+rm -f "$PIDFILE" "$TIMEOUT_FILE"
+
+mtime_of() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+
+# Kill a process AND its descendants (leaves first). Killing only the parent can
+# leave children (a Bash tool subprocess, an MCP server) holding the stdout pipe open,
+# so the parser never gets EOF and the wrapper hangs. Mirrors octo-ai's kill(-pid).
+kill_tree() {
+  local pid="$1" sig="$2" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do kill_tree "$child" "$sig"; done
+  kill "$sig" "$pid" 2>/dev/null || true
+}
+
+watchdog() {
+  local start now pid m
+  start=$(date +%s)
+  for _ in $(seq 1 80); do [ -s "$PIDFILE" ] && break; sleep 0.25; done
+  pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+  [ -z "$pid" ] && return 0
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 2
+    now=$(date +%s)
+    if [ "$MAX_RUNTIME" -gt 0 ] && [ "$((now - start))" -ge "$MAX_RUNTIME" ]; then
+      printf 'runtime %ss' "$MAX_RUNTIME" > "$TIMEOUT_FILE"
+      kill_tree "$pid" -TERM; sleep 5; kill_tree "$pid" -KILL; return 0
+    fi
+    if [ "$IDLE_TIMEOUT" -gt 0 ]; then
+      m="$(mtime_of "$SESSION_DIR/transcript.jsonl")"; m="${m:-$start}"
+      if [ "$((now - m))" -ge "$IDLE_TIMEOUT" ]; then
+        printf 'idle %ss' "$IDLE_TIMEOUT" > "$TIMEOUT_FILE"
+        kill_tree "$pid" -TERM; sleep 5; kill_tree "$pid" -KILL; return 0
+      fi
+    fi
+  done
+}
+
+WATCHDOG_PID=""
+if [ "$MAX_RUNTIME" -gt 0 ] || [ "$IDLE_TIMEOUT" -gt 0 ]; then
+  echo "  guard:  max-runtime=${MAX_RUNTIME}s idle-timeout=${IDLE_TIMEOUT}s" >&2
+  watchdog & WATCHDOG_PID=$!
+fi
+
+# claude runs cd'd into $CWD (working dir, not just --add-dir), prompt via stdin (process
+# substitution so variadic flags can't swallow it AND claude can be backgrounded with a
+# captured PID for the watchdog). Subshell exits with claude's exit code.
 set +e
-printf '%s' "$PROMPT" | ( cd "$CWD" && env \
-  ANTHROPIC_BASE_URL="https://api.deepseek.com/anthropic" \
-  ANTHROPIC_AUTH_TOKEN="$DEEPSEEK_API_KEY" \
-  ANTHROPIC_MODEL="${DS_MODEL:-deepseek-v4-pro}" \
-  ANTHROPIC_DEFAULT_OPUS_MODEL="${DS_MODEL:-deepseek-v4-pro}" \
-  ANTHROPIC_DEFAULT_SONNET_MODEL="${DS_MODEL:-deepseek-v4-pro}" \
-  ANTHROPIC_DEFAULT_HAIKU_MODEL="${DS_FLASH_MODEL:-deepseek-v4-flash}" \
-  CLAUDE_CODE_SUBAGENT_MODEL="${DS_FLASH_MODEL:-deepseek-v4-flash}" \
-  claude "${CLAUDE_ARGS[@]}" ) \
+( cd "$CWD" || exit 127
+  env \
+    ANTHROPIC_BASE_URL="https://api.deepseek.com/anthropic" \
+    ANTHROPIC_AUTH_TOKEN="$DEEPSEEK_API_KEY" \
+    ANTHROPIC_MODEL="${DS_MODEL:-deepseek-v4-pro}" \
+    ANTHROPIC_DEFAULT_OPUS_MODEL="${DS_MODEL:-deepseek-v4-pro}" \
+    ANTHROPIC_DEFAULT_SONNET_MODEL="${DS_MODEL:-deepseek-v4-pro}" \
+    ANTHROPIC_DEFAULT_HAIKU_MODEL="${DS_FLASH_MODEL:-deepseek-v4-flash}" \
+    CLAUDE_CODE_SUBAGENT_MODEL="${DS_FLASH_MODEL:-deepseek-v4-flash}" \
+    claude "${CLAUDE_ARGS[@]}" < <(printf '%s' "$PROMPT") &
+  CPID=$!
+  echo "$CPID" > "$PIDFILE"
+  wait "$CPID" ) \
   | CLAUDE_DS_SESSION_DIR="$SESSION_DIR" \
     CLAUDE_DS_PROMPT_PREVIEW="$(printf '%.120s' "$PROMPT")" \
     CLAUDE_DS_CWD="$CWD" \
@@ -157,25 +223,36 @@ printf '%s' "$PROMPT" | ( cd "$CWD" && env \
     CLAUDE_DS_MODEL="$MODEL" \
     CLAUDE_DS_RESUME="$RESUME" \
     node "$PARSER"
-# PIPESTATUS: [0]=printf, [1]=claude subshell, [2]=node parser. We want claude's exit.
-CLAUDE_RC=${PIPESTATUS[1]}
+# PIPESTATUS: [0]=claude subshell (via wait), [1]=node parser. We want claude's exit.
+CLAUDE_RC=${PIPESTATUS[0]}
 set -e
 
-# The parser only sees stdin EOF — it can't know claude crashed (nonzero exit, bad
-# cwd, no output), so it would mark such a run "done". Reconcile here: if claude
-# failed, flag the session "error" (unless a real result was still captured).
-if [ "${CLAUDE_RC:-0}" -ne 0 ]; then
-  CLAUDE_DS_SESSION_DIR="$SESSION_DIR" CLAUDE_DS_EXIT="$CLAUDE_RC" node -e '
+# Tear down the watchdog and any sleep child it left behind (it usually self-exits when
+# claude finishes, but may be mid-sleep when we get here).
+[ -n "$WATCHDOG_PID" ] && kill_tree "$WATCHDOG_PID" -TERM
+
+# Reconcile session state the parser can't infer from stdin EOF alone: a timeout kill or
+# a claude crash (nonzero exit / bad cwd / no output) should read "error", not "done".
+ERR=""
+if [ -f "$TIMEOUT_FILE" ]; then
+  ERR="timeout: $(cat "$TIMEOUT_FILE" 2>/dev/null)"
+elif [ "${CLAUDE_RC:-0}" -ne 0 ]; then
+  ERR="claude exited $CLAUDE_RC"
+fi
+if [ -n "$ERR" ]; then
+  CLAUDE_DS_SESSION_DIR="$SESSION_DIR" CLAUDE_DS_ERR="$ERR" CLAUDE_DS_EXIT="$CLAUDE_RC" node -e '
     const fs = require("fs"), p = require("path")
-    const d = process.env.CLAUDE_DS_SESSION_DIR, rc = Number(process.env.CLAUDE_DS_EXIT)
+    const d = process.env.CLAUDE_DS_SESSION_DIR, err = process.env.CLAUDE_DS_ERR, rc = Number(process.env.CLAUDE_DS_EXIT)
+    const isTimeout = err.indexOf("timeout") === 0
     let s = {}; try { s = JSON.parse(fs.readFileSync(p.join(d, "status.json"), "utf8")) } catch {}
-    const st = s.finalResultPreview ? (s.state || "done") : "error"
-    s.state = st; s.error = "claude exited " + rc
+    const st = isTimeout ? "error" : (s.finalResultPreview ? (s.state || "done") : "error")
+    s.state = st; s.error = err
     try { fs.writeFileSync(p.join(d, "status.json"), JSON.stringify(s, null, 2) + "\n") } catch {}
     let m = {}; try { m = JSON.parse(fs.readFileSync(p.join(d, "meta.json"), "utf8")) } catch {}
-    m.state = st; m.exitCode = rc; m.error = "claude exited " + rc
+    m.state = st; m.exitCode = rc; m.error = err
     try { fs.writeFileSync(p.join(d, "meta.json"), JSON.stringify(m, null, 2) + "\n") } catch {}
   ' || true
 fi
 
+rm -f "$PIDFILE" "$TIMEOUT_FILE"
 exit "$CLAUDE_RC"

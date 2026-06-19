@@ -66,32 +66,78 @@ Gereksinim: `claude` CLI kurulu ve `~/.local/bin` PATH'te olmalı. DeepSeek key'
 | `/claude-ds:status` | Kurulum/key/CLI durumunu kontrol et |
 | `/claude-ds:balance` | DeepSeek hesap bakiyesini göster |
 
-Doğrudan kullanım (terminal):
+### Hangi aracı kullanmalı?
 
-```bash
-# En basit — subagent gibi tek komut: görevi ver, çalışsın, cevabı al
-ds-agent "fib(n) için bir Python tek-satırı yaz"          # agentic (cwd'de yazabilir)
-ds-agent --read-only "bu repodaki mimariyi özetle"         # salt-okunur (yazmaz)
-#   → nihai cevap stdout'a; canlı tool ilerlemesi stderr'e. `-q` ile sessiz.
+Kurulumdan sonra `~/.local/bin`'e dört giriş noktası gelir. İhtiyaca göre seç:
 
-# Üretim modu — session-takipli, canlı izlenebilir
-claude-ds-stream -p "Write a Python one-liner for fib(n)"
-
-# Gerçek read-only üretim (Write/Edit/Bash kapalı — diske dokunmaz)
-claude-ds-stream --read-only -p "Bu repodaki mimariyi özetle"
-
-# Hızlı tek-atış (parse/session yok)
-claude-ds -p "Write a Python one-liner for fib(n)"
-
-# Tam agentic mod (dosya yazar + bash çalıştırır) — izole worktree ile
-plugins/claude-ds/scripts/ds-worktree-run.sh <repo> <branch> <brief-file>
-```
+| Araç | Ne zaman | Çıktı / takip |
+|------|----------|----------------|
+| **`ds-agent`** | **En basit.** Tek komut: görevi ver, çalışsın, cevabı al (subagent gibi, senkron). | Nihai cevap → stdout; canlı tool ilerlemesi → stderr |
+| **`claude-ds-stream`** | Arka planda çalıştırıp **izlemek / resume** etmek istediğinde. | `status.json`/`progress.log` + `--resume` |
+| **`claude-ds`** | Hızlı tek-atış, takip/parse gerekmiyor. | Sadece düz `claude` çıktısı |
+| **`ds-runner`** (subagent) | Orkestratör bağlamını **temiz tutmak** + otomatik doğrulama. | Kısa, doğrulanmış sonuç |
 
 > ⚠️ **Varsayılan mod bir sandbox değildir.** Wrapper her zaman `--permission-mode
 > bypassPermissions` ile çalışır (non-interactive `--print` modunda onay sorulamaz), bu yüzden
 > işçi `--dangerously-skip-permissions` olmadan da **dosya yazabilir / bash çalıştırabilir**.
-> "Üretim modu" bir kuraldır (dosya görevi vermedin), zorunlu izolasyon değil. Gerçek repo
-> görevlerini worktree'de izole et; garantili "dosya yazmaz" için `--read-only` kullan.
+> Gerçek repo görevlerini worktree'de izole et; garantili "dosya yazmaz" için `--read-only` kullan.
+
+## Örnekler
+
+### 1) Hızlı soru / analiz (yazmaz)
+```bash
+ds-agent --read-only "JWT ile session-cookie auth farkını kısa açıkla"
+ds-agent --read-only "bu repodaki mimariyi özetle"
+```
+`--read-only` → Write/Edit/Bash kapalı; sadece okur ve metin üretir. Cevap stdout'a basılır.
+
+### 2) Kod üretip dosyaya yazdırma (agentic, izole dizinde)
+```bash
+mkdir -p /tmp/scratch && ds-agent --cwd /tmp/scratch "fizzbuzz.py oluştur, 1-15 yaz, çalıştırıp doğrula"
+```
+İzole bir dizin verdiğin için repo'na dokunmaz; `▸ Write … ✓`, `▸ Bash … ✓` adımlarını canlı görürsün.
+
+### 3) Çıktıyı yakalama / pipe'lama
+```bash
+ds-agent --read-only -q "PostgreSQL bağlantı stringi örneği ver" > conn.txt   # -q: banner yok
+answer=$(ds-agent --read-only -q "tek satır: docker nedir")
+```
+`-q` banner/ilerlemeyi susturur; stdout **yalnızca** nihai cevabı taşır → güvenle pipe'lanır.
+
+### 4) Çok-turlu araştırma (aynı bağlamı sürdür)
+```bash
+ds-agent --read-only "bitcoin nedir, uzun cevap"            # session id stderr'de basılır
+ds-agent --read-only --resume <session-id> "lightning network'ü açıkla"
+ds-agent --read-only --resume <session-id> "taproot nedir"
+```
+`--resume` aynı DeepSeek konuşmasına ekler; model önceki turları hatırlar.
+
+### 5) Arka planda uzun iş + canlı izleme (maliyet-odaklı)
+```bash
+claude-ds-stream -p "$(cat brief.txt)"     # background task olarak çalıştır; session id stderr'de
+/claude-ds:watch <session-id>              # sadece status.json + son satırlar (ucuz)
+/claude-ds:sessions                        # tüm session'ları listele
+```
+
+### 6) Güvenlik ağı: timeout
+```bash
+ds-agent --max-runtime 600 --idle-timeout 90 "büyük refactor görevi"
+```
+İş 600 sn'yi aşarsa ya da 90 sn çıktı üretmezse worker (ve çocuk süreçleri) öldürülür; session `state: error` olur.
+
+### 7) Gerçek repo görevi (worktree'de izole + sen incele/merge et)
+```bash
+printf '%s' "auth.ts'e rate-limit ekle, testlerini de yaz" > /tmp/brief.txt
+"${CLAUDE_PLUGIN_ROOT}/scripts/ds-worktree-run.sh" <repo> ds/rate-limit /tmp/brief.txt
+# → izole worktree'de çalışır, diff'i COMMIT'siz bırakır. Sen: git diff → build/test → merge.
+```
+
+### 8) Subagent'a devret (orkestratör bağlamı temiz kalsın)
+```text
+Agent(subagent_type="ds-runner", model="haiku",  prompt="<kendine yeten görev>")   # saf üretim/analiz
+Agent(subagent_type="ds-runner", model="sonnet", prompt="<repo/kod görevi>")        # build/test doğrulaması gerekir
+```
+Detay için aşağıdaki [ds-runner subagent](#ds-runner-subagent-bağlamı-temiz-tut) bölümüne bak.
 
 ## Session takibi (canlı izleme + resume)
 
@@ -106,21 +152,7 @@ Session dizini: `${XDG_CACHE_HOME:-$HOME/.cache}/claude-ds/sessions/<id>/`
 | `transcript.jsonl` | Ham stream-json (resume/audit; izlerken okunmaz) |
 | `meta.json` | Prompt önizlemesi, cwd, branch, model, başlangıç/bitiş |
 
-**Maliyet-odaklı izleme:** ilerlemeyi yalnızca küçük `status.json`'dan takip et (`/claude-ds:watch <id>`); ham transcript'i okuma, sıkı döngüde tail etme. Orkestratör (Claude Code) her okumada token harcadığı için akış bu ilkeye göre tasarlandı.
-
-```bash
-# Listele
-/claude-ds:sessions
-
-# Bir session'ı canlı izle (status.json + progress.log son satırlar)
-/claude-ds:watch <session-id>
-
-# Aynı DeepSeek session'ına takip görevi gönder (devamlılık)
-claude-ds-stream --resume <session-id> -p "<follow-up>"
-
-# Güvenlik ağı: asılı/kaçak worker'ı süre/durgunluk limitinde öldür (saniye; 0 = kapalı)
-claude-ds-stream --max-runtime 600 --idle-timeout 90 -p "<prompt>"
-```
+**Maliyet-odaklı izleme:** ilerlemeyi yalnızca küçük `status.json`'dan takip et (`/claude-ds:watch <id>`); ham transcript'i okuma, sıkı döngüde tail etme. Orkestratör (Claude Code) her okumada token harcadığı için akış bu ilkeye göre tasarlandı. (Komut örnekleri için yukarıdaki [Örnekler](#örnekler) — #4 resume, #5 izleme, #6 timeout.)
 
 > Timeout: bir watchdog, worker toplam süreyi (`--max-runtime`) aşarsa ya da çıktı üretmeden
 > takılırsa (`--idle-timeout`, `transcript.jsonl` aktivitesine göre) worker'ı **ve çocuk

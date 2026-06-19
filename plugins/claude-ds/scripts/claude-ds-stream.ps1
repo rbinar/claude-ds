@@ -63,6 +63,12 @@ while ($i -lt $argc) {
     '^(-p|--prompt)$' { Need-Val $a $i $argc; $prompt = $args[$i+1]; $i += 2; continue }
     '^--prompt=(.*)' { $prompt = $matches[1]; $i += 1; continue }
     '^--read-only$' { $readOnly = 1; $i += 1; continue }
+    '^(--max-runtime|--idle-timeout)$' {
+      # Recognized for CLI parity; enforcement (watchdog/kill-tree) is currently bash-only.
+      [Console]::Error.WriteLine("claude-ds-stream: $a is currently enforced only on bash (macOS/Linux/WSL); ignored here.")
+      $i += 2; continue
+    }
+    '^(--max-runtime|--idle-timeout)=' { $i += 1; continue }
     default        { $passArgs += $a; $i += 1 }
   }
 }

@@ -112,7 +112,15 @@ Session dizini: `${XDG_CACHE_HOME:-$HOME/.cache}/claude-ds/sessions/<id>/`
 
 # Aynı DeepSeek session'ına takip görevi gönder (devamlılık)
 claude-ds-stream --resume <session-id> -p "<follow-up>"
+
+# Güvenlik ağı: asılı/kaçak worker'ı süre/durgunluk limitinde öldür (saniye; 0 = kapalı)
+claude-ds-stream --max-runtime 600 --idle-timeout 90 -p "<prompt>"
 ```
+
+> Timeout: bir watchdog, worker toplam süreyi (`--max-runtime`) aşarsa ya da çıktı üretmeden
+> takılırsa (`--idle-timeout`, `transcript.jsonl` aktivitesine göre) worker'ı **ve çocuk
+> süreçlerini** öldürür; session `state: error` ("timeout: …") olur. Env: `CLAUDE_DS_MAX_RUNTIME`,
+> `CLAUDE_DS_IDLE_TIMEOUT`. (Enforcement şimdilik bash/WSL'de; PowerShell flag'leri kabul eder ama henüz uygulamaz.)
 
 > Gereksinim: `claude-ds-stream` parser için `node` ister (claude-code zaten node ortamında çalışır). Düz `claude-ds` wrapper'ı parse/session olmadan çalışmaya devam eder.
 

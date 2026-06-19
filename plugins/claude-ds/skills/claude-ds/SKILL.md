@@ -77,6 +77,17 @@ claude-ds-stream --resume <session-id> -p "<follow-up>"
 ```
 The transcript is appended to the same session; `status.json` is updated. See sessions: `/claude-ds:sessions`.
 
+### Timeouts (safety net for hung/runaway workers)
+```bash
+claude-ds-stream --max-runtime 600 --idle-timeout 90 -p "<prompt>"   # seconds; 0 = off (default)
+```
+A background watchdog kills the worker (and its child processes) if it exceeds the overall
+runtime cap (`--max-runtime`) or stalls with no new output (`--idle-timeout`, measured from
+`transcript.jsonl` activity). Timed-out sessions are marked `state: error` with
+`error: "timeout: …"`. Env fallbacks: `CLAUDE_DS_MAX_RUNTIME`, `CLAUDE_DS_IDLE_TIMEOUT`.
+Both default off. (Enforcement is bash-only for now; the PowerShell wrapper accepts the
+flags but doesn't enforce them yet.)
+
 ## Safe operation for a real repo task (MANDATORY)
 Use the bundled helper:
 ```bash

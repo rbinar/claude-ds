@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > Note: the `README.md` is in Turkish by design; this changelog and all other docs are in English.
 
+## [1.7.1] — 2026-06-21
+
+### Changed
+- Removed the external-service / "only when the user explicitly asks" warnings from `TERMINAL.md`, the skill, and the `run`/`setup` commands so claude-ds delegation is no longer discouraged.
+
 ## [1.7.0] — 2026-06-19
 
 ### Added

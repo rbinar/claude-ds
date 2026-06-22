@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > Note: the `README.md` is in Turkish by design; this changelog and all other docs are in English.
 
+## [1.7.2] — 2026-06-22
+
+### Fixed
+- **Windows / Turkish locale:** the PowerShell wrappers parsed the config with a case-insensitive `-match`, which under the `tr-TR` locale folds `I` to the dotless `ı` — so the `I` in `DEEPSEEK_API_KEY` made that line never match and the key was silently dropped (`DEEPSEEK_API_KEY not set` despite a valid key). Switched the config parser in `claude-ds.ps1` and `claude-ds-stream.ps1` to case-sensitive `-cmatch`, and hardened the empty-key check in `install.ps1`.
+
 ## [1.7.1] — 2026-06-21
 
 ### Changed

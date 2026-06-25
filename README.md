@@ -10,7 +10,7 @@ Claude Code's built-in `Agent`/subagent tool only supports Anthropic models (son
 
 > 📝 **Write-up (Turkish):** [cli-dispatch: a plugin that makes Claude the boss and DeepSeek the worker](https://medium.com/@rbinar/cli-dispatch-claudea-patron-deepseek-e-i%CC%87%C5%9F%C3%A7i-rol%C3%BC-veren-bir-plugin-b232803581fc) — Medium
 
-<img width="1814" height="606" alt="image" src="https://github.com/user-attachments/assets/a0963910-1571-4d7d-93af-ec003c3090d0" />
+![cli-dispatch demo — delegating a task to DeepSeek as a worker](assets/demo.gif)
 
 ## Install
 

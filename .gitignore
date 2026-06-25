@@ -8,3 +8,6 @@ config
 
 # vhs demo source — local only; the rendered assets/demo.gif is what ships
 *.tape
+
+# macOS cruft
+.DS_Store

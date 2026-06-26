@@ -106,7 +106,13 @@ BRAIN="$AG_HOME/brain"
 # "no active workspace" and scaffold into its own ~/.gemini scratch dir instead of $CWD,
 # which would defeat worktree isolation. (cd-ing the process into $CWD is not enough.)
 AGY_ARGS=(-p "$PROMPT" --add-dir "$CWD")
-PT="${MAX_RUNTIME:-0}"; [ "$PT" -gt 0 ] || PT=600   # agy's own print-mode wait cap (s)
+# Runtime cap via agy's OWN --print-timeout. This is the only RELIABLE bound for the agy
+# backend: agy spawns detached worker process(es) and runs under a pty, so an external
+# process-tree kill (our watchdog) can't be relied on to stop the work — but agy's internal
+# print-timeout does stop it. Trade-off: when agy self-terminates at the cap it exits cleanly
+# (exit 0, partial output), so the session reports `done` (with partial output), NOT `error`.
+# Our watchdog below is only a BEST-EFFORT backstop for a fully-hung agy. (See docs.)
+PT="${MAX_RUNTIME:-0}"; [ "$PT" -gt 0 ] || PT=600
 AGY_ARGS+=(--print-timeout "${PT}s")
 # NOTE: agy has NO verified write-deny flag. `--sandbox` restricts the *terminal* but NOT
 # the internal write_to_file tool — tested: agy under --sandbox still wrote a file. So we do
@@ -150,6 +156,38 @@ PRE_CID=""
 [ -f "$LC" ] && PRE_CID="$(node -e 'try{const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(m[process.argv[2]]||"")}catch{}' "$LC" "$CWD" 2>/dev/null || true)"
 PRE_BRAIN="$(ls "$BRAIN" 2>/dev/null | sort || true)"
 
+# Process helpers (defined BEFORE launch so the discovery-failure path can kill a hung agy
+# — the watchdog only starts AFTER discovery, so without this a startup-hung agy would
+# escape every timeout and `wait` would block forever).
+mtime_of() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+
+# Simple recursive single-signal killer — for well-behaved trees (e.g. the watchdog itself).
+kill_tree() {
+  local pid="$1" sig="${2:--TERM}" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do kill_tree "$child" "$sig"; done
+  kill "$sig" "$pid" 2>/dev/null || true
+}
+
+# Snapshot a pid + all descendants (newline-separated, numeric → safe to word-split).
+proc_tree() {
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do proc_tree "$child"; done
+  printf '%s\n' "$pid"
+}
+
+# Hard-kill the agy subtree. CRITICAL: agy IGNORES SIGTERM and, once `script` (its parent)
+# dies, reparents to init — so a naive "TERM the tree, re-pgrep, KILL the tree" misses agy
+# (the re-pgrep finds nothing under the dead script). We snapshot the whole subtree FIRST,
+# TERM it (graceful for well-behaved children), then KILL the SAME captured pids — so agy is
+# killed by its own pid regardless of reparenting. (bash-3.2 safe: no mapfile.)
+kill_worker() {
+  local root="$1" tree p
+  tree="$(proc_tree "$root")"
+  for p in $tree; do kill -TERM "$p" 2>/dev/null || true; done
+  sleep 3
+  for p in $tree; do kill -KILL "$p" 2>/dev/null || true; done
+}
+
 echo "ag-stream → Antigravity (agy) worker" >&2
 echo "  cwd:    $CWD" >&2
 [ "$RESUME" -eq 1 ] && echo "  resume: $RESUME_ID" >&2
@@ -185,6 +223,9 @@ discover_cid() {
 CID="$(discover_cid || true)"
 if [ -z "$CID" ]; then
   echo "ag-stream: could not discover the agy conversation-id." >&2
+  # Don't `wait` (a startup-hung agy never exits → infinite block). We own the process,
+  # so kill the subtree, reap it, and bail.
+  kill_worker "$AGY_PID"
   wait "$AGY_PID" 2>/dev/null || true
   rm -f "$RAWLOG" "$PIDFILE"
   exit 1
@@ -201,13 +242,13 @@ echo "  conv:   $CID" >&2
 echo "  dir:    $SESSION_DIR" >&2
 echo "  status: $SESSION_DIR/status.json" >&2
 
-# ---- watchdog (reuse claude-ds pattern): runtime cap + idle (transcript mtime) ----
-mtime_of() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
-kill_tree() {
-  local pid="$1" sig="$2" child
-  for child in $(pgrep -P "$pid" 2>/dev/null); do kill_tree "$child" "$sig"; done
-  kill "$sig" "$pid" 2>/dev/null || true
-}
+# ---- watchdog: BEST-EFFORT backstop (runtime cap + idle on transcript mtime) ----
+# IMPORTANT: unlike the DeepSeek backend (where this watchdog hard-kills the worker), agy
+# spawns detached worker process(es) and runs under a pty, so an external tree-kill is NOT a
+# reliable stop — verified: SIGKILL on the whole tracked tree left agy working. The RELIABLE
+# runtime bound is agy's own --print-timeout (set from --max-runtime above). This watchdog
+# only backstops a fully-idle/hung agy whose pty is interruptible. (kill_worker / mtime_of
+# are defined above, before launch.)
 TIMEOUT_REASON=""
 watchdog() {
   local start now m
@@ -217,13 +258,13 @@ watchdog() {
     now=$(date +%s)
     if [ "$MAX_RUNTIME" -gt 0 ] && [ "$((now - start))" -ge "$MAX_RUNTIME" ]; then
       echo "runtime ${MAX_RUNTIME}s" > "$SESSION_DIR/.timeout"
-      kill_tree "$AGY_PID" -TERM; sleep 3; kill_tree "$AGY_PID" -KILL; return 0
+      kill_worker "$AGY_PID"; return 0
     fi
     if [ "$IDLE_TIMEOUT" -gt 0 ] && [ -f "$TRANSCRIPT" ]; then
       m="$(mtime_of "$TRANSCRIPT")"; m="${m:-$start}"
       if [ "$((now - m))" -ge "$IDLE_TIMEOUT" ]; then
         echo "idle ${IDLE_TIMEOUT}s" > "$SESSION_DIR/.timeout"
-        kill_tree "$AGY_PID" -TERM; sleep 3; kill_tree "$AGY_PID" -KILL; return 0
+        kill_worker "$AGY_PID"; return 0
       fi
     fi
   done

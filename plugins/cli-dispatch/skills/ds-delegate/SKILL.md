@@ -159,6 +159,13 @@ ag-stream --cwd <dir> -p "<task>"     # background/session-tracked variant (poll
 - **no read-only mode:** agy has no tool-level write-deny (`--sandbox` restricts the terminal,
   not file writes — tested), so `--read-only` is rejected. For a no-writes guarantee, isolate
   in a throwaway/worktree `--cwd` and review the diff.
+- **timeout semantics differ from DeepSeek:** agy spawns detached workers + runs under a pty,
+  so an external tree-kill is unreliable (verified: SIGKILL on the tracked tree left agy
+  working). `--max-runtime N` is therefore enforced via agy's OWN `--print-timeout` (a
+  per-model-wait cap, so total wall-time may exceed N), and the watchdog is only a best-effort
+  backstop for a fully-hung agy. A capped run may report `done` (partial output) or `error`
+  (no final answer), not a guaranteed `error`. For a true wall-clock bound, run it yourself
+  under `timeout(1)`/worktree and don't rely on the worker self-terminating.
 - **Isolation:** same worktree rule for real-repo tasks — run `ag-agent --cwd <worktree>` and
   review the diff yourself. (Worktree isolation also avoids agy's per-workspace conv-id race.)
 - **Babysitter subagent:** the `ds-runner` subagent currently targets DeepSeek; for Antigravity

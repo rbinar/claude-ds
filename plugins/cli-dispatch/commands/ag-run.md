@@ -27,6 +27,11 @@ avoids agy's per-workspace conversation-id race):
    ```
    `--cwd` is registered as agy's active workspace (via `--add-dir`) so files land there,
    not in agy's own scratch dir.
+
+   > Timeout caveat: agy spawns detached workers, so `--max-runtime` is enforced via agy's
+   > own `--print-timeout` (a per-model-wait cap; total wall-time can exceed it) with only a
+   > best-effort watchdog backstop — it is NOT a hard wall-clock kill like the DeepSeek
+   > backend. For a strict bound, wrap the call in `timeout(1)` yourself.
 3. **Monitor (cost-conscious):** occasionally check `status.json` via
    `/cli-dispatch:ds-watch <conv-id>` (`state: running→done`). Do NOT tight-loop tail.
 4. When done, **review** the diff in the worktree (`git -C <worktree> diff`), verify

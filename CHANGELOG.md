@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Notes
 - Native Windows installs the DeepSeek backend only — the Antigravity backend needs a pseudo-TTY (`script`), so use WSL for it.
+- **Timeout semantics differ from the DeepSeek backend.** agy spawns detached worker processes and runs under a pty, so an external process-tree kill is not a reliable stop (verified: SIGKILL on the whole tracked tree left agy working). `--max-runtime` is therefore enforced via agy's own `--print-timeout` (a per-model-wait cap, so total wall-time may exceed it), with the watchdog as a best-effort backstop only; `--idle-timeout` is best-effort. A capped run may report `done` (partial) or `error`. For a strict wall-clock bound, wrap the call in `timeout(1)` and isolate in a worktree.
+- **No `--read-only`** on the Antigravity backend (agy has no tool-level write-deny; `--sandbox` does not block file writes). The watchdog kill path is hardened with a snapshot-based killer (captures the subtree before signalling) since agy ignores SIGTERM and reparents to init, and the discovery-failure path now kills a startup-hung agy instead of waiting forever.
 
 ## [2.0.0] — 2026-06-23
 

@@ -1,13 +1,13 @@
 ---
-description: List cli-dispatch worker sessions (DeepSeek + Antigravity)
+description: List cli-dispatch worker sessions (all backends: DeepSeek + Antigravity + Codex)
 allowed-tools: Bash
 ---
 
 # cli-dispatch sessions
 
-List the record of delegations started with `claude-ds-stream` (DeepSeek) or `ag-stream`
-(Antigravity) — both write to the same session root — newest first. The `backend` column
-shows which worker ran each.
+List the record of delegations started with `claude-ds-stream` (DeepSeek), `ag-stream`
+(Antigravity), or `cx-stream` (Codex) — all three write to the same session root — newest
+first. The `backend` column shows which worker ran each.
 Cost-conscious: only the small `meta.json` + `status.json` files are read; the raw
 `transcript.jsonl` is NEVER read.
 

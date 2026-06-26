@@ -53,6 +53,6 @@ ag-agent -q "$ARGUMENTS"        # stdout = final answer only; progress in status
 ag-agent --resume <conv-id> "<follow-up>"
 ```
 
-To see all sessions (both backends), use `/cli-dispatch:ds-sessions`.
+To see all sessions (all backends), use `/cli-dispatch:ds-sessions`.
 
 The worker = Antigravity (Gemini); you = reviewer/merge owner. Don't trust the output until verified.

@@ -1,5 +1,5 @@
 ---
-description: Check the cli-dispatch installation status (DeepSeek + Antigravity)
+description: Check the cli-dispatch installation status (DeepSeek + Antigravity + Codex)
 allowed-tools: Bash
 ---
 
@@ -29,7 +29,29 @@ else
 fi
 command -v script >/dev/null 2>&1 && echo "script (pseudo-tty): found" || echo "script (pseudo-tty): MISSING (ag backend needs it)"
 
-command -v node >/dev/null 2>&1 && echo "node: found (required by both stream parsers)" || echo "node: MISSING (the stream wrappers need it)"
+echo "== Codex backend (cx / OpenAI) — optional =="
+command -v cx-agent >/dev/null 2>&1 && echo "wrapper: installed ($(command -v cx-agent))" || echo "wrapper: not installed (enable with /cli-dispatch:ds-setup)"
+if command -v codex >/dev/null 2>&1; then
+  echo "codex CLI: found ($(codex --version 2>/dev/null || echo 'version unknown'))"
+  if [ -f "$CFG" ]; then
+    ( . "$CFG"
+      if [ -n "${CODEX_API_KEY:-}" ]; then
+        echo "auth: CODEX_API_KEY set"
+      elif [ -n "${OPENAI_API_KEY:-}" ]; then
+        echo "auth: OPENAI_API_KEY set (CODEX_API_KEY takes precedence if both are set)"
+      else
+        echo "auth: via codex login (ChatGPT/OAuth) — run 'codex login' once if not signed in"
+      fi
+      [ -n "${CX_MODEL:-}" ] && echo "model: CX_MODEL=${CX_MODEL}" || echo "model: CX_MODEL not set (codex default used)"
+    )
+  else
+    echo "auth: config not found — check CODEX_API_KEY or run 'codex login'"
+  fi
+else
+  echo "codex CLI: MISSING (npm i -g @openai/codex  or  brew install --cask codex)"
+fi
+
+command -v node >/dev/null 2>&1 && echo "node: found (required by all stream parsers)" || echo "node: MISSING (the stream wrappers need it)"
 ```
 
 **Native Windows** (PowerShell equivalent):

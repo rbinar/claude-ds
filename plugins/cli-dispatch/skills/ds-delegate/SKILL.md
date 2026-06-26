@@ -187,7 +187,7 @@ you = orchestrator + reviewer + git/merge owner. Don't trust any output until ve
 - `/cli-dispatch:ds-setup` — install worker backends (DeepSeek and/or Antigravity); choose at setup + config + smoke test.
 - `/cli-dispatch:ds-run <task>` — delegate to the **DeepSeek** worker (worktree isolation for repo tasks, session-tracked).
 - `/cli-dispatch:ag-run <task>` — delegate to the **Antigravity (Gemini)** worker (same workflow).
-- `/cli-dispatch:ds-sessions` — list past/active sessions (both backends; shows a `backend` column).
+- `/cli-dispatch:ds-sessions` — list past/active sessions (all backends; shows a `backend` column).
 - `/cli-dispatch:ds-watch <id>` — show a session's compact live status (cost-conscious).
-- `/cli-dispatch:ds-status` — check installation/key/CLI status for both backends.
+- `/cli-dispatch:ds-status` — check installation/key/CLI status for all backends.
 - `/cli-dispatch:ds-balance` — show the DeepSeek account balance.

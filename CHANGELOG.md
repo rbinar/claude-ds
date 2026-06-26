@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > Note: the `README.md` is in Turkish by design; this changelog and all other docs are in English.
 
+## [2.2.0] — 2026-06-27
+
+### Added
+- **Codex (OpenAI Codex CLI) worker backend.** cli-dispatch is now a three-backend hub: alongside DeepSeek and Antigravity you can delegate to **OpenAI's Codex CLI** (`codex`, ≥ 0.142.3). New wrappers `cx-agent` (one-shot, subagent-style) and `cx-stream` (session-tracked), plus the `cx-stream-parse.mjs` parser, a `/cli-dispatch:cx-run <task>` command, and a `cx-runner` subagent.
+  - `cx-stream` pipes `codex exec --json` stdout through `cx-stream-parse.mjs` (no pseudo-TTY or file-tail needed — codex has a native JSONL stream). Writes the **same session-dir layout** as the other backends (`status.json`/`meta.json`/`progress.log`/`transcript.jsonl`), keyed by codex's thread-id, so `/cli-dispatch:ds-sessions` and `/cli-dispatch:ds-watch` cover all three backends.
+  - **Real OS-level read-only sandbox:** `cx-agent --read-only` passes `-s read-only` to codex, activating macOS Seatbelt / Linux bwrap+seccomp — a kernel-enforced hard-block on all file writes (not a tool-layer restriction like DeepSeek, and not absent like Antigravity). Pure analysis tasks can pass `--read-only` without worktree isolation and get a genuine no-writes guarantee.
+  - Sandbox defaults to `workspace-write` for normal agentic work; override per-call with `cx-agent --read-only` or `cx-agent --sandbox <mode>`.
+  - Resume via the thread-id printed on stderr: `cx-agent --resume <thread-id> --cwd <dir> "<follow-up>"`. Always re-pass `--cwd` on resume (codex reloads workspace from the thread but needs the directory explicitly).
+  - **Auth:** `codex login` (ChatGPT/OAuth — no key needed for personal use) or `CODEX_API_KEY` (takes precedence over `OPENAI_API_KEY`). Config variable for the default model: `CX_MODEL` (with `CODEX_MODEL` as fallback); blank = codex's own default (varies by version, not hardcoded here).
+  - **`cx-runner` subagent** (`agents/cx-runner.md`): babysitter-model agent (haiku/sonnet by difficulty) that manages a full cx-agent delegation in a sub-context — picks mode, isolates in a git worktree for code tasks, verifies (build/test), and returns a concise verdict.
+- **Backend selection extended.** `install.sh --backends` now accepts `codex` as a keyword; `all` expands to `deepseek,antigravity,codex`. The config skeleton gains a Codex section documenting `CODEX_API_KEY`, `CX_MODEL`, and sandbox options.
+
 ## [2.1.0] — 2026-06-26
 
 ### Added

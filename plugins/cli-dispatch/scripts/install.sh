@@ -17,10 +17,11 @@ while [ "$#" -gt 0 ]; do
     *) echo "install.sh: unknown arg '$1'" >&2; exit 1;;
   esac
 done
-[ "$BACKENDS" = "all" ] && BACKENDS="deepseek,antigravity"
+[ "$BACKENDS" = "all" ] && BACKENDS="deepseek,antigravity,codex"
 case ",$BACKENDS," in *,deepseek,*) WANT_DS=1;; *) WANT_DS=0;; esac
 case ",$BACKENDS," in *,antigravity,*) WANT_AG=1;; *) WANT_AG=0;; esac
-[ "$WANT_DS" -eq 1 ] || [ "$WANT_AG" -eq 1 ] || { echo "install.sh: no known backend in '--backends $BACKENDS' (deepseek,antigravity)" >&2; exit 1; }
+case ",$BACKENDS," in *,codex,*) WANT_CX=1;; *) WANT_CX=0;; esac
+[ "$WANT_DS" -eq 1 ] || [ "$WANT_AG" -eq 1 ] || [ "$WANT_CX" -eq 1 ] || { echo "install.sh: no known backend in '--backends $BACKENDS' (deepseek,antigravity,codex)" >&2; exit 1; }
 
 mkdir -p "$BIN_DIR" "$LIBEXEC_DIR"
 echo "Backends: $BACKENDS"
@@ -50,6 +51,23 @@ if [ "$WANT_AG" -eq 1 ]; then
   fi
 fi
 
+# ---- Codex backend (cx-* family, OpenAI Codex CLI) --------------------------
+if [ "$WANT_CX" -eq 1 ]; then
+  install -m 0755 "$SCRIPT_DIR/cx-stream" "$BIN_DIR/cx-stream"
+  install -m 0755 "$SCRIPT_DIR/cx-agent"  "$BIN_DIR/cx-agent"
+  install -m 0644 "$SCRIPT_DIR/cx-stream-parse.mjs" "$LIBEXEC_DIR/cx-stream-parse.mjs"
+  echo "Installed Codex backend -> cx-stream, cx-agent (parser -> $LIBEXEC_DIR/cx-stream-parse.mjs)"
+  if command -v codex >/dev/null 2>&1; then
+    echo "  codex CLI: found ($(codex --version 2>/dev/null || echo '?'))"
+  else
+    echo "  WARNING: 'codex' (OpenAI Codex CLI) not found in PATH. Install it, then sign in:"
+    echo "    npm i -g @openai/codex"
+    echo "    brew install --cask codex"
+    echo "    curl -fsSL https://chatgpt.com/codex/install.sh | sh"
+    echo "    codex login   # sign in (ChatGPT/OAuth), or set CODEX_API_KEY in the config"
+  fi
+fi
+
 # ---- config skeleton (shared; created only if missing — never clobbered) ---
 if [ ! -f "$CONFIG" ]; then
   mkdir -p "$CONFIG_DIR"
@@ -73,6 +91,19 @@ GEMINI_API_KEY=""
 #   "Claude Opus 4.6 (Thinking)"  "Claude Sonnet 4.6 (Thinking)"  "GPT-OSS 120B (Medium)"
 # Override per-call with `ag-agent --model "<name>"`. Run `agy models` for the live list.
 AG_MODEL=""
+
+# --- Codex backend (cx-agent / cx-stream, OpenAI Codex CLI) --- OPTIONAL.
+# Auth: run `codex login` once (ChatGPT/OAuth — no key needed for personal use).
+# For headless/CI, CODEX_API_KEY takes precedence over OPENAI_API_KEY.
+CODEX_API_KEY=""
+# Default model for the codex worker. Blank = codex's own default (varies by version).
+# Override per-call with `cx-agent --model <name>`. Env var read by cx-stream: CX_MODEL
+# (with CODEX_MODEL as fallback). Example: CX_MODEL="o4-mini"
+CX_MODEL=""
+# Sandbox: default workspace-write (files can be written in --cwd).
+# Pass cx-agent --read-only for a REAL OS-level no-writes guarantee (macOS Seatbelt /
+# Linux bwrap+seccomp) — kernel-enforced, unlike other backends.
+# Or pass --sandbox <mode> for other codex sandbox modes.
 CFG
   chmod 600 "$CONFIG"
   echo "Created config template -> $CONFIG"
@@ -103,3 +134,4 @@ esac
 echo "Done."
 [ "$WANT_DS" -eq 1 ] && echo "  DeepSeek:    add your key to $CONFIG, then test: claude-ds -p 'Reply with exactly: OK'"
 [ "$WANT_AG" -eq 1 ] && echo "  Antigravity: sign in with 'agy' (or set GEMINI_API_KEY), then test: ag-agent -q 'Reply with exactly: OK'"
+[ "$WANT_CX" -eq 1 ] && echo "  Codex:       run 'codex login' (or set CODEX_API_KEY), then test: cx-agent --read-only -q 'Reply with exactly: OK'"

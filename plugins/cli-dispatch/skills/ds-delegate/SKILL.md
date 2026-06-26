@@ -148,8 +148,16 @@ ag-agent "<task>"                     # agentic in cwd; live progress on stderr;
 ag-agent -q "<task>"                  # answer only on stdout (banner/progress silenced)
 ag-agent --cwd <dir> "<task>"         # work in <dir>; <dir> is registered as agy's workspace
 ag-agent --resume <conv-id> "<follow-up>"   # continue the same agy conversation
+ag-agent --model "Claude Opus 4.6 (Thinking)" "<task>"   # pick a specific model (see below)
 ag-stream --cwd <dir> -p "<task>"     # background/session-tracked variant (poll status.json)
 ```
+- **Model selection (agy proxies multiple families):** `agy models` lists them; pass the EXACT
+  display name to `--model` (config default: `AG_MODEL`). Verified working cross-vendor —
+  e.g. `--model "Claude Opus 4.6 (Thinking)"` actually routes to Claude, `"Gemini 3.1 Pro (High)"`
+  to Gemini. Current list: `Gemini 3.5 Flash (Low|Medium|High)`, `Gemini 3.1 Pro (Low|High)`,
+  `Claude Sonnet 4.6 (Thinking)`, `Claude Opus 4.6 (Thinking)`, `GPT-OSS 120B (Medium)`. Default
+  `Gemini 3.5 Flash (High)`. ⚠ An unknown name makes agy SILENTLY use its default — ag-stream
+  warns when `--model` isn't in `agy models`, but double-check the exact string (incl. suffix).
 - **Same session dir** as DeepSeek (`…/claude-ds/sessions/<id>/` with `status.json` etc.), so
   `/cli-dispatch:ds-sessions` / `ds-watch` work for both. The session id IS the agy conv-id.
 - **How it works:** agy has no `--output-format json` and a non-TTY silent-drop bug, so

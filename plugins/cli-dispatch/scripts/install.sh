@@ -64,8 +64,14 @@ DS_FLASH_MODEL="deepseek-v4-flash"
 
 # --- Antigravity backend (agy / Gemini) --- OPTIONAL.
 # Auth is normally via Google sign-in (run `agy` once interactively); no key needed.
-# For headless/CI, set a key here instead. AG_MODEL blank = agy's default model.
+# For headless/CI, set a key here instead.
 GEMINI_API_KEY=""
+# Default model for the agy worker. Blank = agy's own default (Gemini 3.5 Flash (High)).
+# The value is the EXACT display name from `agy models` (incl. the reasoning suffix). agy
+# proxies multiple families — examples:
+#   "Gemini 3.1 Pro (High)"  "Gemini 3.5 Flash (High)"
+#   "Claude Opus 4.6 (Thinking)"  "Claude Sonnet 4.6 (Thinking)"  "GPT-OSS 120B (Medium)"
+# Override per-call with `ag-agent --model "<name>"`. Run `agy models` for the live list.
 AG_MODEL=""
 CFG
   chmod 600 "$CONFIG"

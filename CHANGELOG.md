@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > Note: the `README.md` is in Turkish by design; this changelog and all other docs are in English.
 
+## [3.0.1] — 2026-06-27
+
+### Changed
+- **`ds-delegate` skill documents the Codex backend.** The skill description + body now cover the third worker (Codex / `cx-agent` / `cx-stream`) alongside DeepSeek and Antigravity: a new "Codex (OpenAI) backend" section (real OS-level read-only sandbox, model selection, auth, `cx-runner`), updated Role/Commands lists, and new trigger phrases (`delegate to codex`, `codex/openai ile yap`). Docs-only; no behavior change.
+
+### Notes
+- Investigated a native usage/quota command for the agy and Codex backends (an `ag-balance`/`cx-balance` analog to `ds-balance`). Neither CLI exposes a scriptable balance/usage command — only in-TUI slash commands (`/usage` in agy, `/status` in codex) and web dashboards. No such command was added (a third-party tool would be required, which is out of scope).
+
 ## [3.0.0] — 2026-06-27
 
 ### Changed

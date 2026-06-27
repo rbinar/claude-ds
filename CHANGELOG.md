@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > Note: the `README.md` is in Turkish by design; this changelog and all other docs are in English.
 
+## [3.4.0] — 2026-06-28
+
+### Added
+- **`/cli-dispatch:dashboard` — a local, read-only web dashboard.** Lists active Claude Code CLI sessions across all projects (busy ones pinned); click a session → its **flow** (messages / tool calls / results) → the **subagents** it spawned → click a subagent to drill into *its* flow (nested by spawn depth). A second panel shows the cli-dispatch **worker** delegations (DeepSeek / Antigravity / Codex) with state + flow. Busy targets auto-refresh.
+  - New `dashboard-server.mjs` (Node stdlib `http`/`fs` only — no npm deps), launcher `cli-dispatch-dashboard` (+ `.ps1`), and the `dashboard` command. `install.sh`/`install.ps1` install them unconditionally (backend-agnostic).
+  - Reads only on-disk data: `~/.claude/projects/**` (transcripts: `uuid`/`parentUuid`, `tool_use`↔`tool_result`, `tool_use name:"Agent"`→`toolUseResult.agentId` for subagent links), `~/.claude/sessions/*.json` (live busy/idle), and `~/.cache/cli-dispatch/sessions/**` (workers).
+  - **Safety:** binds `127.0.0.1` only; strictly read-only; no config/secret access; `:id` params are sanitised and path-traversal is rejected. This is the only long-running process the plugin starts (stop via the printed `kill <pid>`). The Claude Code transcript format is internal/version-specific — unknown shapes render defensively.
+
 ## [3.3.0] — 2026-06-27
 
 ### Added

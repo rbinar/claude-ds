@@ -47,6 +47,11 @@ case ",$BACKENDS," in *,codex,*) WANT_CX=1;; *) WANT_CX=0;; esac
 mkdir -p "$BIN_DIR" "$LIBEXEC_DIR"
 echo "Backends: $BACKENDS"
 
+# ---- Dashboard (backend-agnostic; always installed) ------------------------
+install -m 0755 "$SCRIPT_DIR/cli-dispatch-dashboard" "$BIN_DIR/cli-dispatch-dashboard"
+install -m 0644 "$SCRIPT_DIR/dashboard-server.mjs"   "$LIBEXEC_DIR/dashboard-server.mjs"
+echo "Installed dashboard -> cli-dispatch-dashboard (server -> $LIBEXEC_DIR/dashboard-server.mjs); open it with /cli-dispatch:dashboard"
+
 # ---- DeepSeek backend (claude-ds family) -----------------------------------
 if [ "$WANT_DS" -eq 1 ]; then
   install -m 0755 "$SCRIPT_DIR/claude-ds"        "$BIN_DIR/claude-ds"

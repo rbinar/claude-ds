@@ -1,0 +1,441 @@
+#!/usr/bin/env node
+// dashboard-server.mjs — cli-dispatch dashboard.
+// A self-contained, read-only local web dashboard over data that already lives on disk:
+//   • active Claude Code CLI sessions → their flow → the subagents they spawned → each subagent's flow
+//   • cli-dispatch worker delegations (DeepSeek / Antigravity / Codex)
+// Stdlib only (node:http/fs/path/os) — no npm deps, matching the existing parsers.
+// Binds 127.0.0.1 ONLY. Never reads config/secrets. All :id params are path-sanitised.
+//
+// The Claude Code on-disk formats (~/.claude/sessions, ~/.claude/projects/**) are internal
+// and may change across Claude Code versions — the mappers degrade gracefully on unknown shapes.
+
+import http from 'node:http'
+import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
+import { spawnSync } from 'node:child_process'
+
+const HOME = os.homedir()
+const PROJECTS_DIR = path.join(HOME, '.claude', 'projects')
+const CC_SESSIONS_DIR = path.join(HOME, '.claude', 'sessions')
+const CACHE = process.env.XDG_CACHE_HOME || path.join(HOME, '.cache')
+const WORKERS_ROOT = process.env.CLI_DISPATCH_SESSIONS_DIR || process.env.CLAUDE_DS_SESSIONS_DIR ||
+  (fs.existsSync(path.join(CACHE, 'cli-dispatch', 'sessions')) || !fs.existsSync(path.join(CACHE, 'claude-ds', 'sessions'))
+    ? path.join(CACHE, 'cli-dispatch', 'sessions') : path.join(CACHE, 'claude-ds', 'sessions'))
+
+const FLOW_CAP = 400          // max events returned per flow request
+const ID_RE = /^[A-Za-z0-9._-]+$/
+
+// ---- args ----
+const argv = process.argv.slice(2)
+let PORT = 7878, OPEN = true
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === '--port') PORT = parseInt(argv[++i], 10) || PORT
+  else if (argv[i] === '--no-open') OPEN = false
+}
+
+// ---- small fs helpers ----
+const readJSON = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return null } }
+const safeStat = (p) => { try { return fs.statSync(p) } catch { return null } }
+const isDir = (p) => { const s = safeStat(p); return s && s.isDirectory() }
+
+// Read first ~maxBytes of a file (for the opening user prompt).
+function readHead(file, maxBytes = 16384) {
+  try {
+    const fd = fs.openSync(file, 'r'); const buf = Buffer.alloc(maxBytes)
+    const n = fs.readSync(fd, buf, 0, maxBytes, 0); fs.closeSync(fd)
+    return buf.toString('utf8', 0, n)
+  } catch { return '' }
+}
+// Read last ~maxBytes of a file (for the latest event / activity).
+function readTail(file, maxBytes = 65536) {
+  try {
+    const st = fs.statSync(file); const start = Math.max(0, st.size - maxBytes)
+    const fd = fs.openSync(file, 'r'); const len = st.size - start; const buf = Buffer.alloc(len)
+    const n = fs.readSync(fd, buf, 0, len, start); fs.closeSync(fd)
+    return buf.toString('utf8', 0, n)
+  } catch { return '' }
+}
+const lines = (s) => s.split('\n').filter((l) => l.trim())
+const firstJSON = (txt) => { for (const l of lines(txt)) { try { return JSON.parse(l) } catch {} } return null }
+const lastJSON = (txt) => { const ls = lines(txt); for (let i = ls.length - 1; i >= 0; i--) { try { return JSON.parse(ls[i]) } catch {} } return null }
+const clip = (s, n = 140) => { s = String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n) + '…' : s }
+
+// Pull a readable preview out of a message.content that may be string or block array.
+function contentText(content) {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    for (const b of content) {
+      if (b && b.type === 'text' && b.text) return b.text
+      if (typeof b === 'string') return b
+    }
+  }
+  return ''
+}
+
+// ---- Claude Code sessions ----
+// Map sessionId -> {pid, status} from ~/.claude/sessions/<pid>.json
+function liveStatusMap() {
+  const m = {}
+  if (!isDir(CC_SESSIONS_DIR)) return m
+  for (const f of fs.readdirSync(CC_SESSIONS_DIR)) {
+    if (!f.endsWith('.json')) continue
+    const j = readJSON(path.join(CC_SESSIONS_DIR, f))
+    if (j && j.sessionId) m[j.sessionId] = { pid: j.pid, status: j.status, updatedAt: j.updatedAt, cwd: j.cwd }
+  }
+  return m
+}
+
+// Locate the transcript jsonl + project dir for a session id (scan all projects).
+function findSession(id) {
+  if (!isDir(PROJECTS_DIR)) return null
+  for (const proj of fs.readdirSync(PROJECTS_DIR)) {
+    const file = path.join(PROJECTS_DIR, proj, id + '.jsonl')
+    if (fs.existsSync(file)) return { id, project: proj, file, dir: path.join(PROJECTS_DIR, proj, id) }
+  }
+  return null
+}
+
+function subagentDir(sess) { return path.join(sess.dir, 'subagents') }
+function countSubagents(sess) {
+  const d = subagentDir(sess); if (!isDir(d)) return 0
+  return fs.readdirSync(d).filter((f) => f.endsWith('.meta.json')).length
+}
+
+function listSessions() {
+  const live = liveStatusMap()
+  const out = []
+  if (isDir(PROJECTS_DIR)) {
+    for (const proj of fs.readdirSync(PROJECTS_DIR)) {
+      const pdir = path.join(PROJECTS_DIR, proj)
+      if (!isDir(pdir)) continue
+      for (const f of fs.readdirSync(pdir)) {
+        if (!f.endsWith('.jsonl')) continue
+        const id = f.slice(0, -6)
+        const file = path.join(pdir, f)
+        const st = safeStat(file); if (!st) continue
+        const head = firstJSON(readHead(file)) || {}
+        const tail = lastJSON(readTail(file)) || {}
+        const lv = live[id]
+        const sess = { id, project: proj, dir: path.join(pdir, id), file }
+        out.push({
+          id,
+          project: proj,
+          cwd: (head.cwd) || (lv && lv.cwd) || '',
+          status: lv ? (lv.status || 'idle') : 'closed',
+          startedAt: head.timestamp || null,
+          lastActivityAt: tail.timestamp || new Date(st.mtimeMs).toISOString(),
+          mtime: st.mtimeMs,
+          firstPrompt: clip(contentText(head.message && head.message.content), 80),
+          subagentCount: countSubagents(sess),
+          sizeKB: Math.round(st.size / 1024),
+        })
+      }
+    }
+  }
+  const rank = (s) => (s.status === 'busy' ? 0 : s.status === 'idle' ? 1 : 2)
+  out.sort((a, b) => rank(a) - rank(b) || (b.mtime - a.mtime))
+  return out
+}
+
+// ---- flow mapper (shared by session + subagent transcripts) ----
+function mapFlow(file) {
+  if (!fs.existsSync(file)) return { steps: [], total: 0, truncated: false }
+  const all = lines(readTail(file, 4 * 1024 * 1024))   // cap memory; big files keep their tail
+  const total = all.length
+  const slice = all.slice(Math.max(0, all.length - FLOW_CAP))
+  const evs = []
+  for (const l of slice) { try { evs.push(JSON.parse(l)) } catch {} }
+  // pass 1: toolUseId -> agentId (subagent links live on the following user event)
+  const agentOf = {}
+  for (const e of evs) {
+    const tur = e.toolUseResult
+    if (tur && tur.agentId) {
+      const c = e.message && e.message.content
+      if (Array.isArray(c)) for (const b of c) if (b && b.type === 'tool_result' && b.tool_use_id) agentOf[b.tool_use_id] = tur.agentId
+    }
+  }
+  const resultOf = {}   // tool_use_id -> {ok, text}
+  for (const e of evs) {
+    const c = e.message && e.message.content
+    if (Array.isArray(c)) for (const b of c) if (b && b.type === 'tool_result' && b.tool_use_id)
+      resultOf[b.tool_use_id] = { ok: !b.is_error, text: clip(contentText(b.content), 160) }
+  }
+  const steps = []
+  for (const e of evs) {
+    const ts = e.timestamp || null
+    const c = e.message && e.message.content
+    if (e.type === 'user') {
+      if (typeof c === 'string') { if (!e.isMeta) steps.push({ kind: 'prompt', ts, text: clip(c, 400) }) }
+      // tool_result blocks are folded into their tool step below; skip standalone
+    } else if (e.type === 'assistant' && Array.isArray(c)) {
+      for (const b of c) {
+        if (b.type === 'text' && b.text) steps.push({ kind: 'message', ts, text: clip(b.text, 400) })
+        else if (b.type === 'thinking' && b.thinking) steps.push({ kind: 'thinking', ts, text: clip(b.thinking, 300) })
+        else if (b.type === 'tool_use') {
+          const res = resultOf[b.id]
+          steps.push({
+            kind: 'tool', ts, name: b.name,
+            summary: toolSummary(b.name, b.input),
+            ok: res ? res.ok : null,
+            result: res ? res.text : '',
+            spawnsAgent: (b.name === 'Agent' || b.name === 'Task') ? (agentOf[b.id] || null) : null,
+          })
+        }
+      }
+    }
+  }
+  return { steps, total, truncated: total > slice.length }
+}
+
+function toolSummary(_name, input) {
+  if (!input || typeof input !== 'object') return ''
+  if (input.command) return clip(input.command, 120)
+  if (input.file_path) return clip(input.file_path, 120)
+  if (input.pattern) return clip(input.pattern, 120)
+  if (input.description) return clip(input.description, 120)
+  if (input.prompt) return clip(input.prompt, 120)
+  if (input.url) return clip(input.url, 120)
+  if (input.query) return clip(input.query, 120)
+  const k = Object.keys(input)[0]
+  return k ? clip(k + '=' + JSON.stringify(input[k]), 120) : ''
+}
+
+// ---- subagents ----
+function listSubagents(sess) {
+  const d = subagentDir(sess); const out = []
+  if (!isDir(d)) return out
+  for (const f of fs.readdirSync(d)) {
+    if (!f.endsWith('.meta.json')) continue
+    const aid = f.replace(/^agent-/, '').replace(/\.meta\.json$/, '')
+    const meta = readJSON(path.join(d, f)) || {}
+    const jl = path.join(d, 'agent-' + aid + '.jsonl')
+    const st = safeStat(jl)
+    out.push({
+      agentId: aid,
+      agentType: meta.agentType || '?',
+      description: meta.description || '',
+      spawnDepth: meta.spawnDepth || 1,
+      startedAt: st ? new Date(st.birthtimeMs || st.mtimeMs).toISOString() : null,
+      sizeKB: st ? Math.round(st.size / 1024) : 0,
+    })
+  }
+  return out
+}
+
+// ---- cli-dispatch workers ----
+function listWorkers() {
+  const out = []
+  if (!isDir(WORKERS_ROOT)) return out
+  for (const d of fs.readdirSync(WORKERS_ROOT)) {
+    const dir = path.join(WORKERS_ROOT, d); if (!isDir(dir)) continue
+    const m = readJSON(path.join(dir, 'meta.json')) || {}
+    const s = readJSON(path.join(dir, 'status.json')) || {}
+    out.push({
+      id: d,
+      backend: s.backend || m.backend || 'deepseek',
+      state: s.state || m.state || '?',
+      started: m.startedAt || '',
+      cwd: m.cwd || '',
+      model: m.model || '',
+      prompt: clip(m.promptPreview, 80),
+      lastTool: s.lastTool || null,
+      events: s.events || 0,
+      toolCounts: s.toolCounts || {},
+      usage: s.usage || null,
+      finalResultPreview: clip(s.finalResultPreview, 200),
+    })
+  }
+  out.sort((a, b) => String(b.started).localeCompare(String(a.started)))
+  return out
+}
+
+function workerFlow(id) {
+  const dir = path.join(WORKERS_ROOT, id)
+  const steps = []
+  const log = path.join(dir, 'progress.log')
+  if (fs.existsSync(log)) {
+    for (const l of lines(readTail(log, 256 * 1024)).slice(-FLOW_CAP)) steps.push({ kind: 'log', text: clip(l, 300) })
+  }
+  const s = readJSON(path.join(dir, 'status.json')) || {}
+  return { steps, state: s.state || '?', finalResultPreview: clip(s.finalResultPreview, 600) }
+}
+
+// ---- routing ----
+function send(res, code, obj) {
+  const body = JSON.stringify(obj)
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+  res.end(body)
+}
+const okId = (id) => typeof id === 'string' && ID_RE.test(id)
+
+const server = http.createServer((req, res) => {
+  const u = new URL(req.url, 'http://127.0.0.1')
+  const p = u.pathname
+  try {
+    if (p === '/' || p === '/index.html') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(PAGE); return
+    }
+    if (p === '/api/sessions') return send(res, 200, listSessions())
+    if (p === '/api/workers') return send(res, 200, listWorkers())
+
+    let m
+    if ((m = p.match(/^\/api\/session\/([^/]+)\/flow$/))) {
+      const id = decodeURIComponent(m[1]); if (!okId(id)) return send(res, 400, { error: 'bad id' })
+      const sess = findSession(id); if (!sess) return send(res, 404, { error: 'not found' })
+      return send(res, 200, mapFlow(sess.file))
+    }
+    if ((m = p.match(/^\/api\/session\/([^/]+)\/subagents$/))) {
+      const id = decodeURIComponent(m[1]); if (!okId(id)) return send(res, 400, { error: 'bad id' })
+      const sess = findSession(id); if (!sess) return send(res, 404, { error: 'not found' })
+      return send(res, 200, listSubagents(sess))
+    }
+    if ((m = p.match(/^\/api\/subagent\/([^/]+)\/([^/]+)\/flow$/))) {
+      const sid = decodeURIComponent(m[1]), aid = decodeURIComponent(m[2])
+      if (!okId(sid) || !okId(aid)) return send(res, 400, { error: 'bad id' })
+      const sess = findSession(sid); if (!sess) return send(res, 404, { error: 'not found' })
+      const jl = path.join(subagentDir(sess), 'agent-' + aid + '.jsonl')
+      const rp = path.resolve(jl)
+      if (!rp.startsWith(path.resolve(subagentDir(sess)) + path.sep)) return send(res, 400, { error: 'bad path' })
+      return send(res, 200, mapFlow(jl))
+    }
+    if ((m = p.match(/^\/api\/worker\/([^/]+)\/flow$/))) {
+      const id = decodeURIComponent(m[1]); if (!okId(id)) return send(res, 400, { error: 'bad id' })
+      const dir = path.resolve(path.join(WORKERS_ROOT, id))
+      if (!dir.startsWith(path.resolve(WORKERS_ROOT) + path.sep) || !isDir(dir)) return send(res, 404, { error: 'not found' })
+      return send(res, 200, workerFlow(id))
+    }
+    send(res, 404, { error: 'no route' })
+  } catch (e) {
+    send(res, 500, { error: String(e && e.message || e) })
+  }
+})
+
+function listen(port, tries = 12) {
+  server.once('error', (e) => {
+    if (e.code === 'EADDRINUSE' && tries > 0) { listen(port + 1, tries - 1) }
+    else { console.error('dashboard: ' + e.message); process.exit(1) }
+  })
+  server.listen(port, '127.0.0.1', () => {
+    const url = 'http://127.0.0.1:' + port
+    console.error('cli-dispatch dashboard → ' + url + '  (read-only; Ctrl-C to stop)')
+    if (OPEN) {
+      const cmd = process.platform === 'darwin' ? 'open' : (process.platform === 'win32' ? 'explorer.exe' : 'xdg-open')
+      try { spawnSync(cmd, [url], { stdio: 'ignore' }) } catch {}
+    }
+  })
+}
+listen(PORT)
+
+// ---- embedded single-page UI ----
+const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>cli-dispatch dashboard</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--bd:#30363d;--fg:#e6edf3;--dim:#8b949e;--acc:#ff7a18;--g:#3fb950;--y:#d29922;--lnk:#58a6ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+header{padding:8px 14px;border-bottom:1px solid var(--bd);display:flex;gap:10px;align-items:center}
+header b{color:var(--acc)} .grow{flex:1}
+.layout{display:grid;grid-template-columns:320px 1fr;height:calc(100vh - 41px)}
+.rail{border-right:1px solid var(--bd);overflow:auto}
+.tabs{display:flex;border-bottom:1px solid var(--bd)} .tab{flex:1;padding:8px;text-align:center;cursor:pointer;color:var(--dim)}
+.tab.on{color:var(--fg);border-bottom:2px solid var(--acc)}
+.item{padding:8px 12px;border-bottom:1px solid var(--bd);cursor:pointer}
+.item:hover{background:#1f2630}.item.sel{background:#1f2937}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.busy{background:var(--g)}.idle{background:var(--y)}.closed{background:#484f58}
+.muted{color:var(--dim)}.small{font-size:11px}
+.main{overflow:auto;padding:14px}
+.crumb{margin-bottom:10px;color:var(--dim)}.crumb a{color:var(--lnk);cursor:pointer;text-decoration:none}
+.badge{border:1px solid var(--bd);border-radius:10px;padding:1px 7px;font-size:11px;color:var(--dim);margin-left:6px}
+.step{padding:6px 8px;border-left:2px solid var(--bd);margin:4px 0}
+.step.tool{border-color:var(--acc)}.step.prompt{border-color:var(--lnk)}.step.message{border-color:#444c56}
+.step.thinking{border-color:#373e47;color:var(--dim)}.step.log{border-color:#373e47}
+.k{color:var(--acc)}.ok{color:var(--g)}.err{color:#f85149}
+.sa{display:inline-block;margin:3px 6px 3px 0;padding:3px 8px;border:1px solid var(--bd);border-radius:6px;cursor:pointer;color:var(--lnk)}
+.sa:hover{background:#1f2630}.empty{color:var(--dim);padding:20px}
+a.agentlink{color:var(--lnk);cursor:pointer}
+</style></head><body>
+<header><b>cli-dispatch</b> <span class="muted">dashboard</span><span class="grow"></span>
+<span class="small muted" id="meta"></span><span class="small muted">· read-only · localhost</span></header>
+<div class="layout">
+ <div class="rail">
+   <div class="tabs"><div class="tab on" id="tabCC">Claude Code</div><div class="tab" id="tabW">cli-dispatch workers</div></div>
+   <div id="list"></div>
+ </div>
+ <div class="main"><div class="crumb" id="crumb">Select a session…</div><div id="view" class="empty">←</div></div>
+</div>
+<script>
+let mode='cc', sel=null, timer=null
+const E=(h)=>{const d=document.createElement('div');d.innerHTML=h;return d.firstChild}
+const esc=(s)=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))
+async function j(u){const r=await fetch(u);return r.json()}
+
+async function loadList(){
+  const el=document.getElementById('list'); el.innerHTML=''
+  if(mode==='cc'){
+    const ss=await j('/api/sessions')
+    document.getElementById('meta').textContent=ss.length+' sessions'
+    ss.forEach(s=>{
+      const it=E('<div class="item'+(sel===s.id?' sel':'')+'"><div><span class="dot '+s.status+'"></span>'+esc(s.project.replace(/^-/,'').split('-').slice(-2).join('/'))+'<span class="badge">'+s.status+'</span>'+(s.subagentCount?'<span class="badge">'+s.subagentCount+' sub</span>':'')+'</div><div class="small muted">'+esc(s.firstPrompt||s.id.slice(0,8))+'</div><div class="small muted">'+esc((s.lastActivityAt||'').replace('T',' ').slice(0,19))+' · '+s.sizeKB+'KB</div></div>')
+      it.onclick=()=>openSession(s); el.appendChild(it)
+    })
+  }else{
+    const ws=await j('/api/workers')
+    document.getElementById('meta').textContent=ws.length+' workers'
+    ws.forEach(w=>{
+      const it=E('<div class="item'+(sel===w.id?' sel':'')+'"><div><span class="dot '+(w.state==='running'?'busy':w.state==='done'?'closed':'idle')+'"></span>'+esc(w.backend)+'<span class="badge">'+esc(w.state)+'</span></div><div class="small muted">'+esc(w.prompt||w.id.slice(0,8))+'</div><div class="small muted">'+esc((w.started||'').replace('T',' ').slice(0,19))+(w.lastTool?' · '+esc(w.lastTool):'')+'</div></div>')
+      it.onclick=()=>openWorker(w); el.appendChild(it)
+    })
+  }
+}
+function renderFlow(steps){
+  if(!steps||!steps.length) return '<div class="empty">no steps</div>'
+  return steps.map(s=>{
+    if(s.kind==='tool'){
+      const st=s.ok===true?'<span class="ok">⎿ ok</span>':s.ok===false?'<span class="err">⎿ error</span>':''
+      let head='⏺ <span class="k">'+esc(s.name)+'</span> '+esc(s.summary||'')
+      if(s.spawnsAgent) head='⏺ <span class="k">'+esc(s.name)+'</span> <a class="agentlink" onclick="openSub(\\''+s.spawnsAgent+'\\')">→ '+esc(s.summary||'subagent')+'</a>'
+      return '<div class="step tool">'+head+(st?'<div class="small">'+st+' '+esc(s.result||'')+'</div>':'')+'</div>'
+    }
+    if(s.kind==='prompt') return '<div class="step prompt">▸ '+esc(s.text)+'</div>'
+    if(s.kind==='message') return '<div class="step message">⏺ '+esc(s.text)+'</div>'
+    if(s.kind==='thinking') return '<div class="step thinking">✻ '+esc(s.text)+'</div>'
+    return '<div class="step log">'+esc(s.text)+'</div>'
+  }).join('')
+}
+async function openSession(s){
+  sel=s.id; mode='cc'; clearInterval(timer)
+  document.getElementById('crumb').innerHTML='<a onclick="back()">sessions</a> › '+esc(s.id.slice(0,8))+' <span class="muted">('+esc(s.status)+')</span>'
+  const v=document.getElementById('view'); v.className=''; v.innerHTML='loading…'
+  const [flow,subs]=await Promise.all([j('/api/session/'+s.id+'/flow'),j('/api/session/'+s.id+'/subagents')])
+  window._cur={type:'session',id:s.id}
+  let h=''
+  if(subs.length){h+='<div style="margin-bottom:10px">'+subs.map(a=>'<span class="sa" onclick="openSub(\\''+a.agentId+'\\')">'+esc(a.agentType)+': '+esc(a.description||a.agentId.slice(0,8))+(a.spawnDepth>1?' ·d'+a.spawnDepth:'')+'</span>').join('')+'</div>'}
+  h+=renderFlow(flow.steps)+(flow.truncated?'<div class="small muted">(showing last '+flow.steps.length+' of '+flow.total+')</div>':'')
+  v.innerHTML=h; loadList()
+  if(s.status==='busy') timer=setInterval(()=>openSession(s),3000)
+}
+async function openSub(aid){
+  const sid=window._cur&&window._cur.type==='session'?window._cur.id:(window._cur&&window._cur.sid)
+  if(!sid) return; clearInterval(timer)
+  document.getElementById('crumb').innerHTML='<a onclick="back()">sessions</a> › <a onclick="reopen(\\''+sid+'\\')">'+esc(sid.slice(0,8))+'</a> › <span class="k">subagent '+esc(aid.slice(0,8))+'</span>'
+  const v=document.getElementById('view'); v.className=''; v.innerHTML='loading…'
+  const flow=await j('/api/subagent/'+sid+'/'+aid+'/flow')
+  window._cur={type:'sub',sid:sid,aid:aid}
+  v.innerHTML=renderFlow(flow.steps)+(flow.truncated?'<div class="small muted">(last '+flow.steps.length+' of '+flow.total+')</div>':'')
+}
+async function openWorker(w){
+  sel=w.id; clearInterval(timer)
+  document.getElementById('crumb').innerHTML='<a onclick="back()">workers</a> › '+esc(w.backend)+' '+esc(w.id.slice(0,12))+' <span class="muted">('+esc(w.state)+')</span>'
+  const v=document.getElementById('view'); v.className=''; v.innerHTML='loading…'
+  const flow=await j('/api/worker/'+w.id+'/flow')
+  let h=renderFlow(flow.steps)
+  if(flow.finalResultPreview) h+='<div class="step message" style="margin-top:10px">⏺ <b>result:</b> '+esc(flow.finalResultPreview)+'</div>'
+  v.innerHTML=h; loadList()
+  if(w.state==='running') timer=setInterval(()=>openWorker(w),3000)
+}
+function reopen(sid){ fetch('/api/sessions').then(r=>r.json()).then(ss=>{const s=ss.find(x=>x.id===sid); if(s) openSession(s)}) }
+function back(){ clearInterval(timer); sel=null; window._cur=null; document.getElementById('crumb').textContent='Select a session…'; document.getElementById('view').className='empty'; document.getElementById('view').innerHTML='←'; loadList() }
+document.getElementById('tabCC').onclick=()=>{mode='cc';document.getElementById('tabCC').classList.add('on');document.getElementById('tabW').classList.remove('on');back()}
+document.getElementById('tabW').onclick=()=>{mode='w';document.getElementById('tabW').classList.add('on');document.getElementById('tabCC').classList.remove('on');back()}
+loadList(); setInterval(()=>{ if(!sel) loadList() },4000)
+</script></body></html>`

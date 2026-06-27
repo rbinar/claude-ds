@@ -83,6 +83,27 @@ to the running session (without a full restart). Verify with `/cli-dispatch:stat
 
 > ▶️ [Watch the update demo (mp4)](assets/update.mp4) — `/plugin update` then `/reload-plugins` inside Claude Code.
 
+## Dashboard
+
+```text
+/cli-dispatch:dashboard
+```
+
+A **local, read-only web dashboard** over data that already lives on disk. It lists active
+Claude Code CLI sessions (all projects, **busy** ones pinned on top); click a session to see
+its **flow** (messages / tool calls / results), the **subagents** it spawned, and click a
+subagent to drill into *its* flow (nested by spawn depth). A second panel shows the
+cli-dispatch **worker** delegations (DeepSeek / Antigravity / Codex) with their state + flow.
+Busy sessions auto-refresh.
+
+It reads `~/.claude/projects/**` (Claude Code transcripts), `~/.claude/sessions/*.json` (live
+busy/idle), and `~/.cache/cli-dispatch/sessions/**` (workers). Notes:
+- **The only long-running process the plugin starts.** It binds `127.0.0.1` only, is strictly
+  **read-only**, and never touches your config/keys. Stop it with the printed `kill <pid>`
+  (or Ctrl-C if you run `cli-dispatch-dashboard` yourself in a terminal).
+- The Claude Code on-disk transcript format is internal and may change across versions; the
+  dashboard renders unknown shapes defensively.
+
 ## Usage
 
 You use claude-ds **from inside Claude Code** — two ways:
@@ -93,6 +114,7 @@ You use claude-ds **from inside Claude Code** — two ways:
 | Command | What it does |
 |---------|--------------|
 | `/cli-dispatch:setup` | Pick backend(s) + install + config skeleton + smoke test |
+| `/cli-dispatch:dashboard` | Open the local web dashboard — Claude Code sessions → flow → subagents → flow, + worker panel |
 | `/cli-dispatch:ds-run <task>` | Delegate a task to **DeepSeek** (session-tracked; worktree isolation for repo tasks) |
 | `/cli-dispatch:ag-run <task>` | Delegate a task to **Antigravity (Gemini)** (same workflow) |
 | `/cli-dispatch:cx-run <task>` | Delegate a task to **Codex (OpenAI)** (real read-only sandbox; same session layout) |

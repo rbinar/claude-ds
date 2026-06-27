@@ -42,6 +42,12 @@ New-Item -ItemType Directory -Force -Path $LibExecDir | Out-Null
 Copy-Item -Force (Join-Path $ScriptDir "ds-stream-parse.mjs") (Join-Path $LibExecDir "ds-stream-parse.mjs")
 Write-Host "Installed stream wrapper -> $BinDir\claude-ds-stream.ps1 (+ .cmd shim; parser -> $LibExecDir\ds-stream-parse.mjs)"
 
+# Dashboard (backend-agnostic; always installed).
+Copy-Item -Force (Join-Path $ScriptDir "cli-dispatch-dashboard.ps1") (Join-Path $BinDir "cli-dispatch-dashboard.ps1")
+Set-Content -Path (Join-Path $BinDir "cli-dispatch-dashboard.cmd") -Value (New-Shim "cli-dispatch-dashboard") -Encoding ASCII
+Copy-Item -Force (Join-Path $ScriptDir "dashboard-server.mjs") (Join-Path $LibExecDir "dashboard-server.mjs")
+Write-Host "Installed dashboard -> $BinDir\cli-dispatch-dashboard.ps1 (+ .cmd shim; server -> $LibExecDir\dashboard-server.mjs)"
+
 # Single-command, subagent-style synchronous wrapper.
 Copy-Item -Force (Join-Path $ScriptDir "ds-agent.ps1") (Join-Path $BinDir "ds-agent.ps1")
 Set-Content -Path (Join-Path $BinDir "ds-agent.cmd") -Value (New-Shim "ds-agent") -Encoding ASCII

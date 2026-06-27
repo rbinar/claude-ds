@@ -14,7 +14,7 @@ DeepSeek and Antigravity backends use → **live, observable, resumable**. Monit
 **cost-conscious** way: read only the small `status.json`, never the raw transcript. The session
 id is the codex **thread-id** (printed on stderr after the run completes).
 
-Prerequisite: `cx-agent` / `cx-stream` installed (`/cli-dispatch:ds-setup`, Codex backend) and
+Prerequisite: `cx-agent` / `cx-stream` installed (`/cli-dispatch:setup`, Codex backend) and
 `codex` signed in (`codex login`) or `CODEX_API_KEY` set.
 
 **If it's a real repo task** (file changes needed) — isolate in a git worktree:
@@ -31,7 +31,7 @@ Prerequisite: `cx-agent` / `cx-stream` installed (`/cli-dispatch:ds-setup`, Code
    `--sandbox read-only` or `--sandbox danger-full-access` (valid values: `read-only` |
    `workspace-write` | `danger-full-access`) as needed.
 3. **Monitor (cost-conscious):** capture the thread-id from stderr, then check progress via
-   `/cli-dispatch:ds-watch <thread-id>` (`state: running→done`). Do NOT tight-loop tail.
+   `/cli-dispatch:watch <thread-id>` (`state: running→done`). Do NOT tight-loop tail.
 4. When done, **review** the diff (`git -C "$WORKTREE" diff`), verify independently (build/test).
 5. If all good, **you** handle git/commit/push/PR/merge; then clean up the worktree.
 
@@ -47,10 +47,13 @@ cx-agent --read-only -q "$ARGUMENTS"   # stdout = final answer; progress in stat
 
 **Model selection:**
 ```bash
-cx-agent --model o4-mini --read-only -q "$ARGUMENTS"
+cx-agent --model gpt-5.4-mini --read-only -q "$ARGUMENTS"
 ```
-Omit `--model` to use codex's own default (or the `CX_MODEL` config value). Check available
-models with `codex models`.
+Omit `--model` to use codex's own default (or the `CX_MODEL` config value). Current Codex
+models (`--model <name>`): `gpt-5.5` (default, frontier coding), `gpt-5.4` (flagship),
+`gpt-5.4-mini` (fast/cheap — lighter tasks & subagents), `gpt-5.3-codex-spark` (ChatGPT Pro
+research preview). `gpt-5.2` / `gpt-5.3-codex` are deprecated. List live with `/model`
+inside codex; names move fast, so trust codex's picker over this list.
 
 **Follow-up / fix** (continue the same Codex thread):
 ```bash
@@ -60,6 +63,6 @@ Resume reuses the thread's stored context — do NOT pass `--cwd` on resume (the
 subcommand does not support it). Also: never pass `--ephemeral` to a session you intend to
 resume — it disables session persistence so no thread-id is saved (nothing to resume).
 
-To see all sessions (all backends), use `/cli-dispatch:ds-sessions`.
+To see all sessions (all backends), use `/cli-dispatch:sessions`.
 
 The worker = Codex (OpenAI); you = reviewer/merge owner. Don't trust the output until verified.

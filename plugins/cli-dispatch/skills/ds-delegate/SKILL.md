@@ -8,10 +8,13 @@ description: |
   in a git worktree, and review/verify/merge of the output. The built-in Agent/subagent
   tool canNOT use DeepSeek (model enum is Anthropic-only) — claude-ds is the only path.
   cli-dispatch is multi-backend: a second worker, **Antigravity (agy / Gemini)**, is
-  available via `ag-agent` / `ag-stream` (see the Antigravity section below).
+  available via `ag-agent` / `ag-stream`, and a third, **Codex (OpenAI Codex CLI)**, via
+  `cx-agent` / `cx-stream` (see the Antigravity and Codex sections below). Codex adds a
+  real OS-level read-only sandbox (`cx-agent --read-only`).
   Triggers: "claude-ds", "delegate to claude-ds", "run with deepseek", "delegate to
-  antigravity/gemini", "run with agy" (also Turkish: "deepseek ile yap/çalıştır",
-  "gemini/antigravity ile yap", "delege et claude-ds").
+  antigravity/gemini", "run with agy", "delegate to codex", "run with codex/openai" (also
+  Turkish: "deepseek ile yap/çalıştır", "gemini/antigravity ile yap", "codex/openai ile
+  yap", "delege et claude-ds").
 user-invocable: true
 ---
 
@@ -176,18 +179,50 @@ ag-stream --cwd <dir> -p "<task>"     # background/session-tracked variant (poll
   under `timeout(1)`/worktree and don't rely on the worker self-terminating.
 - **Isolation:** same worktree rule for real-repo tasks — run `ag-agent --cwd <worktree>` and
   review the diff yourself. (Worktree isolation also avoids agy's per-workspace conv-id race.)
-- **Babysitter subagent:** the `ds-runner` subagent currently targets DeepSeek; for Antigravity
-  call `ag-agent` directly (or inside a worktree) and verify the result yourself.
+- **Babysitter subagent:** the `ag-runner` subagent manages an Antigravity delegation in a
+  sub-context (or call `ag-agent` directly in a worktree and verify the result yourself).
+
+## Codex (OpenAI) backend — `cx-agent` / `cx-stream`
+cli-dispatch's third worker is **Codex** (`codex`, OpenAI's Codex CLI ≥ 0.142.3) — again a
+*different binary* with its own auth. Enable it via `/cli-dispatch:setup` (choose Codex).
+
+The `cx-*` family mirrors the `ds-*` one:
+```bash
+cx-agent "<task>"                       # agentic in cwd; live progress on stderr; answer on stdout
+cx-agent -q "<task>"                    # answer only on stdout
+cx-agent --read-only -q "<question>"    # REAL OS-level read-only sandbox (no writes / no bash)
+cx-agent --cwd <dir> "<task>"           # work in <dir>
+cx-agent --model gpt-5.4-mini "<task>"  # pick a model (see below)
+cx-agent --resume <thread-id> "<follow-up>"   # continue the same codex thread (do NOT pass --cwd)
+cx-stream --cwd <dir> -p "<task>"       # background/session-tracked variant (poll status.json)
+```
+- **Real OS-level read-only sandbox (headline feature):** `cx-agent --read-only` passes
+  `-s read-only` to codex → macOS Seatbelt / Linux bwrap+seccomp, a kernel-enforced hard-block
+  on all file writes. Unlike DeepSeek (tool-layer restriction) and Antigravity (none), this is
+  a genuine no-writes guarantee — no worktree needed for pure analysis. Sandbox defaults to
+  `workspace-write` for agentic work; override with `--sandbox read-only|workspace-write|danger-full-access`.
+- **Model selection:** `--model <name>` (config default `CX_MODEL`; blank = codex's own default).
+  Current: `gpt-5.5` (default, frontier), `gpt-5.4` (flagship), `gpt-5.4-mini` (fast/cheap,
+  subagents), `gpt-5.3-codex-spark` (ChatGPT Pro preview). `gpt-5.2`/`gpt-5.3-codex` deprecated.
+  Run `/model` inside codex for the live list.
+- **Same session dir** as the others (`…/claude-ds/sessions/<id>/`), so `/cli-dispatch:sessions`
+  / `watch` work for all three. The session id is the codex **thread-id**.
+- **How it works:** `codex exec --json` emits a clean JSONL stream → `cx-stream` pipes it
+  through `cx-stream-parse.mjs` (no pseudo-TTY/file-tail needed). Requires `node`.
+- **Auth:** `codex login` (ChatGPT/OAuth — no key for personal use) or `CODEX_API_KEY`
+  (takes precedence over `OPENAI_API_KEY`).
+- **Babysitter subagent:** the `cx-runner` subagent manages a Codex delegation in a sub-context.
 
 ## Role
-The worker (claude-ds = DeepSeek, or ag-agent = Antigravity/Gemini) does the work;
-you = orchestrator + reviewer + git/merge owner. Don't trust any output until verified.
+The worker (claude-ds = DeepSeek, ag-agent = Antigravity/Gemini, or cx-agent = Codex/OpenAI)
+does the work; you = orchestrator + reviewer + git/merge owner. Don't trust any output until verified.
 
 ## Commands
-- `/cli-dispatch:setup` — install worker backends (DeepSeek and/or Antigravity); choose at setup + config + smoke test.
+- `/cli-dispatch:setup` — install worker backends (DeepSeek / Antigravity / Codex); choose at setup + config + smoke test.
 - `/cli-dispatch:ds-run <task>` — delegate to the **DeepSeek** worker (worktree isolation for repo tasks, session-tracked).
 - `/cli-dispatch:ag-run <task>` — delegate to the **Antigravity (Gemini)** worker (same workflow).
-- `/cli-dispatch:sessions` — list past/active sessions (all backends; shows a `backend` column).
+- `/cli-dispatch:cx-run <task>` — delegate to the **Codex (OpenAI)** worker (real read-only sandbox; same workflow).
+- `/cli-dispatch:sessions` — list past/active sessions (all backends; shows a `backend` column). Per-backend: `ag-sessions` / `cx-sessions`.
 - `/cli-dispatch:watch <id>` — show a session's compact live status (cost-conscious).
-- `/cli-dispatch:status` — check installation/key/CLI status for all backends.
+- `/cli-dispatch:status` — check installation/key/CLI status for all backends. Per-backend: `ag-status` / `cx-status`.
 - `/cli-dispatch:ds-balance` — show the DeepSeek account balance.

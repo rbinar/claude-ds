@@ -6,7 +6,7 @@ A Claude Code plugin that **delegates a task to the right worker CLI** — a mul
 
 > ℹ️ **Multi-backend delegation hub.** Three worker backends today — **DeepSeek** (commands `/cli-dispatch:ds-*`), **Antigravity/Gemini** (`/cli-dispatch:ag-run`, wrappers `ag-agent`/`ag-stream`), and **Codex** (`/cli-dispatch:cx-run`, wrappers `cx-agent`/`cx-stream`). You pick which to install at setup. All three write to the same session layout, so `sessions`/`watch` work across all. The DeepSeek wrapper/config paths keep the `claude-ds` name (that backend's name).
 
-Claude Code's built-in `Agent`/subagent tool only supports Anthropic models (sonnet/opus/haiku) — it can't hand work to DeepSeek or Gemini. cli-dispatch installs portable wrappers that drive each worker CLI (Claude Code against DeepSeek's API; the Antigravity CLI for Gemini), so you can hand tasks to either as a **delegated worker**.
+Claude Code's built-in `Agent`/subagent tool only supports Anthropic models (sonnet/opus/haiku) — it can't hand work to DeepSeek, Gemini, or OpenAI's Codex. cli-dispatch installs portable wrappers that drive each worker CLI (Claude Code against DeepSeek's API; the Antigravity CLI for Gemini; the OpenAI Codex CLI), so you can hand tasks to any of them as a **delegated worker**.
 
 > 📝 **Write-up (Turkish):** [cli-dispatch: a plugin that makes Claude the boss and DeepSeek the worker](https://medium.com/@rbinar/cli-dispatch-claudea-patron-deepseek-e-i%CC%87%C5%9F%C3%A7i-rol%C3%BC-veren-bir-plugin-b232803581fc) — Medium
 
@@ -106,10 +106,10 @@ busy/idle), and `~/.cache/cli-dispatch/sessions/**` (workers). Notes:
 
 ## Usage
 
-You use claude-ds **from inside Claude Code** — two ways:
+You use cli-dispatch **from inside Claude Code** — two ways:
 
 1. **Slash commands** (table below) — typed at the `claude` session's prompt.
-2. **Natural language** — say "do this with deepseek", "delegate this to claude-ds"; the skill kicks in and Claude Code runs the work.
+2. **Natural language** — say "do this with deepseek", "run this with codex", "delegate this to gemini"; the skill kicks in and Claude Code runs the work on the matching backend.
 
 | Command | What it does |
 |---------|--------------|
@@ -132,22 +132,25 @@ You use claude-ds **from inside Claude Code** — two ways:
 
 ## Features
 
-All used from inside Claude Code (`/cli-dispatch:ds-run <task>` or "do <task> with deepseek"):
+All used from inside Claude Code (`/cli-dispatch:ds-run <task>`, `/cli-dispatch:cx-run`, `/cli-dispatch:ag-run`, or "do <task> with deepseek/codex/gemini"):
 
-- **Delegate & verify** — hands the task to a DeepSeek worker; Claude Code runs it, watches live, verifies the output. Conversation context is not shared → the task must be **self-contained**.
-- **Session tracking (live watch + resume)** — work is not an opaque background process; it's observable and the same DeepSeek conversation can be resumed. → [Session tracking](#session-tracking-live-watch--resume)
-- **`--read-only` mode** — the worker can't write files / run bash; safe for pure analysis and generation.
-- **agentic + worktree isolation** — real repo tasks run in a separate git worktree; the diff is left **uncommitted** (review → build/test → merge is **on you/Claude**).
+- **Three worker backends, one hub** — **DeepSeek** (`ds-*`), **Antigravity / Gemini** (`ag-*`), **Codex / OpenAI** (`cx-*`). Pick any (or all) at setup; all three write the **same session layout**, so `sessions`, `watch`, `clean`, the balance commands, and the dashboard work across every backend.
+- **Delegate & verify** — the worker generates/implements; Claude Code watches live and verifies the output. Conversation context is not shared → the task must be **self-contained**. The worker = doer, you = reviewer/merge owner.
+- **Session tracking (live watch + resume)** — work is not an opaque background process; each run writes a session dir (status / progress / transcript / meta + the full prompt) and is observable and resumable. → [Session tracking](#session-tracking-live-watch--resume)
+- **`--read-only` mode (Codex = real OS sandbox)** — `cx-agent --read-only` activates a **kernel-enforced** no-writes sandbox (macOS Seatbelt / Linux bwrap+seccomp). DeepSeek's `--read-only` is a tool-layer restriction; Antigravity has no write-deny (isolate it in a worktree).
+- **agentic + worktree isolation** — real repo tasks run in a throwaway git worktree; the diff is left **uncommitted** (review → build/test → merge is **on you/Claude**). Bundled helpers: `ds-/ag-/cx-worktree-run`.
+- **Per-backend runner subagents (`ds-/ag-/cx-runner`)** — hand the whole delegation to an isolated sub-context that picks the mode, isolates the work, verifies, and returns a short result — the management noise never enters the orchestrator. → [runner subagents](#ds-runner-subagent-keep-context-clean)
+- **Web dashboard** — a local, read-only view: Claude Code sessions → flow → subagents → flow, plus a worker panel. Pinned task/instruction, Markdown-rendered messages, stale-worker detection, live SSE updates. → [Dashboard](#dashboard)
+- **Native usage / quota** — `/cli-dispatch:balance` (all three at once) or a per-backend `*-balance`; reverse-engineered from each CLI's own local data, **no third-party tools**. → [Usage & quota](#usage--quota--native-no-third-party-tool)
+- **Housekeeping** — `/cli-dispatch:clean` prunes stale (`running`-but-dead) worker dirs; `/cli-dispatch:clean-schedule` automates it daily via launchd / cron / Scheduled Tasks.
 - **timeout safety net** — a hung/runaway worker is auto-killed (with its child processes) at a runtime or idle limit; the session goes `state: error`.
-- **global MCP isolation** — the worker does not inherit your `~/.claude` MCP servers (playwright, etc.).
-- **ds-runner subagent** — hand the whole delegation to an isolated sub-context; the management noise never enters the orchestrator. → [ds-runner](#ds-runner-subagent-keep-context-clean)
-- **Helper commands** — `/cli-dispatch:sessions`, `/cli-dispatch:watch <id>`, `/cli-dispatch:status`, `/cli-dispatch:ds-balance`.
+- **global MCP isolation** — workers do not inherit your `~/.claude` MCP servers (playwright, etc.).
 
-> ⚠️ **The default mode is not a sandbox.** The worker runs with `bypassPermissions` → it **can write files / run bash** even without `--dangerously-skip-permissions`. Isolate real repo work in a worktree; use `--read-only` for a guaranteed "won't write files".
+> ⚠️ **The default mode is not a sandbox.** Workers run agentic → they **can write files / run bash**. Isolate real repo work in a worktree; for a guaranteed "won't write files" use `--read-only` (and on **Codex** that guarantee is kernel-enforced).
 
 ## Session tracking (live watch + resume)
 
-Delegated work is **not an opaque background process**: output is parsed line by line (stream-json) and each task is written to a **session directory**. You track what the DeepSeek worker is doing in a **live, structured, resumable** way via `/cli-dispatch:sessions` and `/cli-dispatch:watch <id>`.
+Delegated work is **not an opaque background process**: every backend's output is parsed and each task is written to a **session directory** (same layout for DeepSeek, Antigravity, and Codex). You track what the worker is doing in a **live, structured, resumable** way via `/cli-dispatch:sessions` and `/cli-dispatch:watch <id>`.
 
 Session directory: `${XDG_CACHE_HOME:-$HOME/.cache}/cli-dispatch/sessions/<id>/` (legacy `claude-ds` path still read as a fallback)
 
@@ -157,6 +160,7 @@ Session directory: `${XDG_CACHE_HOME:-$HOME/.cache}/cli-dispatch/sessions/<id>/`
 | `progress.log` | Terse human-readable stream (`▸ Edit foo.ts`, `✓ / ✗`, truncated text) |
 | `transcript.jsonl` | Raw stream-json (resume/audit; not read while watching) |
 | `meta.json` | Prompt preview, cwd, branch, model, start/end |
+| `prompt.txt` | The **full** task prompt (untruncated; shown pinned atop the worker's dashboard page) |
 
 **Cost-aware watching:** progress is tracked only from the small `status.json` (`/cli-dispatch:watch <id>`); the raw transcript is not read, not tailed in a tight loop — because every read by the orchestrator spends tokens.
 
@@ -300,13 +304,13 @@ git worktree prune         # clean up dead records
 
 ## Security and data
 
-- **The API key never leaves your machine:** the key lives in `~/.config/cli-dispatch/config` (0600, outside the repo) and is **never committed**. The plugin/skill never writes the key anywhere; you add it.
-- **Data egress:** the **prompt and code you give claude-ds are sent to DeepSeek (an external service).** Use it only if you accept that.
-- **Isolated work:** real repo tasks run in a separate git worktree via `ds-worktree-run.sh`; `--dangerously-skip-permissions` doesn't touch the main checkout/other branches. Reviewing the output (diff + build/test) and merging is **up to you**.
+- **Keys never leave your machine:** any key lives in `~/.config/cli-dispatch/config` (0600, outside the repo) and is **never committed**. The plugin/skill never writes a key anywhere; you add it. (Codex and Antigravity normally use their own OAuth sign-in — no key in the config at all.)
+- **Data egress:** the **prompt and code you give a worker are sent to that backend's provider** — DeepSeek, Google (Gemini/Antigravity), or OpenAI (Codex). Use each only if you accept that. The dashboard and `*-balance` commands are local/read-only and send nothing extra on your behalf.
+- **Isolated work:** real repo tasks run in a separate git worktree; the agentic mode doesn't touch the main checkout/other branches. Reviewing the output (diff + build/test) and merging is **up to you**.
 
 ## Architectural role
 
-`claude-ds` = the worker (DeepSeek generation/implementation). You (Claude Code, Anthropic) = orchestrator + reviewer + git/merge owner.
+The worker (DeepSeek / Gemini / Codex) = the doer (generation/implementation). You (Claude Code, Anthropic) = orchestrator + reviewer + git/merge owner. Don't trust a worker's output until you've verified it.
 
 ## License
 

@@ -6,7 +6,7 @@
 
 > ℹ️ **Çok-backend delege hub'ı.** Bugün üç işçi backend'i var — **DeepSeek** (komutlar `/cli-dispatch:ds-*`), **Antigravity/Gemini** (`/cli-dispatch:ag-run`, wrapper'lar `ag-agent`/`ag-stream`) ve **Codex** (`/cli-dispatch:cx-run`, wrapper'lar `cx-agent`/`cx-stream`). Hangisini kuracağını setup'ta seçersin. Üçü de aynı session düzenine yazar; `sessions`/`watch` hepsinde çalışır. DeepSeek wrapper/config yolları `claude-ds` adını korur (o backend'in adı).
 
-Claude Code'un yerleşik `Agent`/subagent tool'u yalnızca Anthropic modellerini (sonnet/opus/haiku) destekler — DeepSeek'e ya da Gemini'ye iş veremez. cli-dispatch her işçi CLI'ı süren taşınabilir wrapper'lar kurar (Claude Code'u DeepSeek API'siyle; Gemini için Antigravity CLI'ı); böylece görevleri ikisine de **delege işçi** olarak verebilirsin.
+Claude Code'un yerleşik `Agent`/subagent tool'u yalnızca Anthropic modellerini (sonnet/opus/haiku) destekler — DeepSeek'e, Gemini'ye ya da OpenAI Codex'e iş veremez. cli-dispatch her işçi CLI'ı süren taşınabilir wrapper'lar kurar (Claude Code'u DeepSeek API'siyle; Gemini için Antigravity CLI'ı; OpenAI Codex CLI'ı); böylece görevleri herhangi birine **delege işçi** olarak verebilirsin.
 
 > 📝 **Yazı:** [cli-dispatch: Claude'a patron, DeepSeek'e işçi rolü veren bir plugin](https://medium.com/@rbinar/cli-dispatch-claudea-patron-deepseek-e-i%CC%87%C5%9F%C3%A7i-rol%C3%BC-veren-bir-plugin-b232803581fc) — Medium
 
@@ -106,10 +106,10 @@ session'lar otomatik yenilenir.
 
 ## Kullanım
 
-claude-ds'i **Claude Code'un içinden** kullanırsın — iki yol:
+cli-dispatch'i **Claude Code'un içinden** kullanırsın — iki yol:
 
 1. **Slash komutları** (aşağıdaki tablo) — `claude` oturumunun prompt'una yazılır.
-2. **Doğal dille** — "deepseek ile şunu yap", "bunu claude-ds'e delege et" dersin; skill devreye girer ve Claude Code işi yürütür.
+2. **Doğal dille** — "deepseek ile şunu yap", "codex ile çalıştır", "gemini'ye delege et" dersin; skill devreye girer ve Claude Code işi eşleşen backend'de yürütür.
 
 | Komut | İş |
 |-------|-----|
@@ -132,22 +132,25 @@ claude-ds'i **Claude Code'un içinden** kullanırsın — iki yol:
 
 ## Özellikler
 
-Hepsi Claude Code içinden kullanılır (`/cli-dispatch:ds-run <görev>` ya da "deepseek ile <görev>"):
+Hepsi Claude Code içinden kullanılır (`/cli-dispatch:ds-run <görev>`, `/cli-dispatch:cx-run`, `/cli-dispatch:ag-run` ya da "deepseek/codex/gemini ile <görev>"):
 
-- **Delege & doğrula** — görevi DeepSeek işçisine verir; Claude Code yürütür, canlı izler, çıktıyı doğrular. Konuşma bağlamı paylaşılmaz → görev **kendine yeten** olmalı.
-- **Session takibi (canlı izleme + resume)** — iş opak bir arka plan süreci değildir; izlenebilir ve aynı DeepSeek konuşması sürdürülebilir. → [Session takibi](#session-takibi-canlı-izleme--resume)
-- **`--read-only` mod** — işçi dosya yazamaz / bash çalıştıramaz; saf analiz ve üretim için güvenli.
-- **agentic + worktree izolasyonu** — gerçek repo görevleri ayrı bir git worktree'de çalışır; diff **commit'siz** bırakılır (incele → build/test → merge **sende/Claude'da**).
+- **Üç işçi backend, tek hub** — **DeepSeek** (`ds-*`), **Antigravity / Gemini** (`ag-*`), **Codex / OpenAI** (`cx-*`). Setup'ta birini (veya hepsini) seç; üçü de **aynı session düzenine** yazar, böylece `sessions`, `watch`, `clean`, balance komutları ve dashboard her backend'de çalışır.
+- **Delege & doğrula** — işçi üretir/uygular; Claude Code canlı izler ve çıktıyı doğrular. Konuşma bağlamı paylaşılmaz → görev **kendine yeten** olmalı. İşçi = yapan, sen = inceleyen/merge sahibi.
+- **Session takibi (canlı izleme + resume)** — iş opak bir arka plan süreci değildir; her çalışma bir session dizini yazar (status / progress / transcript / meta + tam prompt) ve izlenebilir/sürdürülebilir. → [Session takibi](#session-takibi-canlı-izleme--resume)
+- **`--read-only` mod (Codex = gerçek OS sandbox)** — `cx-agent --read-only` **kernel-zorunlu** yazma-yok sandbox'ı aktive eder (macOS Seatbelt / Linux bwrap+seccomp). DeepSeek'in `--read-only`'si araç-katmanı kısıtı; Antigravity'de yazma-engeli yok (worktree'de izole et).
+- **agentic + worktree izolasyonu** — gerçek repo görevleri tek-kullanımlık git worktree'de çalışır; diff **commit'siz** bırakılır (incele → build/test → merge **sende/Claude'da**). Yardımcılar: `ds-/ag-/cx-worktree-run`.
+- **Backend başına runner subagent (`ds-/ag-/cx-runner`)** — tüm delegasyonu izole bir alt-bağlama devret; modu seçer, işi izole eder, doğrular, kısa sonuç döner — yönetim gürültüsü orkestratöre girmez. → [runner subagent'lar](#ds-runner-subagent-bağlamı-temiz-tut)
+- **Web dashboard** — local, salt-okunur: Claude Code session'ları → akış → subagent'lar → akış, + worker paneli. Üstte sabit görev/talimat, Markdown render, stale-worker tespiti, canlı SSE. → [Dashboard](#dashboard)
+- **Native kullanım / kota** — `/cli-dispatch:balance` (üçü birden) ya da backend başına `*-balance`; her CLI'nın kendi local verisinden, **üçüncü-parti araç yok**. → [Kullanım & kota](#kullanım--kota--native-üçüncü-parti-araç-yok)
+- **Temizlik** — `/cli-dispatch:clean` stale (`running` ama ölü) worker dizinlerini budar; `/cli-dispatch:clean-schedule` bunu launchd / cron / Scheduled Tasks ile günlük otomatikleştirir.
 - **timeout güvenlik ağı** — asılı/kaçak işçi, süre veya durgunluk limitinde (çocuk süreçleriyle birlikte) otomatik öldürülür; session `state: error` olur.
-- **global MCP izolasyonu** — işçi senin `~/.claude` MCP sunucularını (playwright, vb.) miras almaz.
-- **ds-runner subagent** — tüm delegasyonu izole bir alt-bağlama devret; yönetim gürültüsü orkestratöre girmez. → [ds-runner](#ds-runner-subagent-bağlamı-temiz-tut)
-- **Yardımcı komutlar** — `/cli-dispatch:sessions`, `/cli-dispatch:watch <id>`, `/cli-dispatch:status`, `/cli-dispatch:ds-balance`.
+- **global MCP izolasyonu** — işçiler senin `~/.claude` MCP sunucularını (playwright, vb.) miras almaz.
 
-> ⚠️ **Varsayılan mod bir sandbox değildir.** İşçi `bypassPermissions` ile çalışır → `--dangerously-skip-permissions` olmasa bile **dosya yazabilir / bash çalıştırabilir**. Gerçek repo işini worktree'de izole et; garantili "dosya yazmaz" için `--read-only` kullan.
+> ⚠️ **Varsayılan mod bir sandbox değildir.** İşçiler agentic çalışır → **dosya yazabilir / bash çalıştırabilir**. Gerçek repo işini worktree'de izole et; garantili "dosya yazmaz" için `--read-only` kullan (**Codex**'te bu garanti kernel-zorunlu).
 
 ## Session takibi (canlı izleme + resume)
 
-Delege edilen iş **opak bir arka plan süreci değildir**: çıktı satır satır (stream-json) parse edilip her görev bir **session dizinine** yazılır. DeepSeek işçisinin ne yaptığını `/cli-dispatch:sessions` ve `/cli-dispatch:watch <id>` ile **canlı, yapılandırılmış ve resume-edilebilir** şekilde takip edersin.
+Delege edilen iş **opak bir arka plan süreci değildir**: her backend'in çıktısı parse edilip her görev bir **session dizinine** yazılır (DeepSeek, Antigravity ve Codex için aynı düzen). İşçinin ne yaptığını `/cli-dispatch:sessions` ve `/cli-dispatch:watch <id>` ile **canlı, yapılandırılmış ve resume-edilebilir** şekilde takip edersin.
 
 Session dizini: `${XDG_CACHE_HOME:-$HOME/.cache}/cli-dispatch/sessions/<id>/` (eski `claude-ds` yolu hâlâ fallback olarak okunur)
 
@@ -157,6 +160,7 @@ Session dizini: `${XDG_CACHE_HOME:-$HOME/.cache}/cli-dispatch/sessions/<id>/` (e
 | `progress.log` | Terse insan-okur akış (`▸ Edit foo.ts`, `✓ / ✗`, kısaltılmış metin) |
 | `transcript.jsonl` | Ham stream-json (resume/audit; izlerken okunmaz) |
 | `meta.json` | Prompt önizlemesi, cwd, branch, model, başlangıç/bitiş |
+| `prompt.txt` | **Tam** görev prompt'u (kısaltmasız; worker'ın dashboard sayfasında üstte sabit gösterilir) |
 
 **Maliyet-odaklı izleme:** ilerleme yalnızca küçük `status.json`'dan takip edilir (`/cli-dispatch:watch <id>`); ham transcript okunmaz, sıkı döngüde tail edilmez — orkestratörün her okuması token harcadığı için.
 
@@ -304,13 +308,13 @@ git worktree prune         # ölü kayıtları temizle
 
 ## Güvenlik ve veri
 
-- **API key makineden çıkmaz:** key `~/.config/cli-dispatch/config` içinde (0600, repo dışında) tutulur ve **asla commit edilmez**. Plugin/skill key'i hiçbir yere yazmaz; sen eklersin.
-- **Veri egress:** claude-ds'e verdiğin **prompt ve kod DeepSeek'e (harici servis) gönderilir.** Yalnızca bunu kabul ediyorsan kullan.
-- **İzole çalışma:** gerçek repo görevleri `ds-worktree-run.sh` ile ayrı git worktree'de çalışır; `--dangerously-skip-permissions` ana checkout'a/diğer branch'lere dokunmaz. Üreteni inceleyip (diff + build/test) merge etmek **sana** kalır.
+- **Key'ler makineden çıkmaz:** varsa key `~/.config/cli-dispatch/config` içinde (0600, repo dışında) tutulur ve **asla commit edilmez**. Plugin/skill key'i hiçbir yere yazmaz; sen eklersin. (Codex ve Antigravity normalde kendi OAuth girişlerini kullanır — config'te key bile olmaz.)
+- **Veri egress:** bir işçiye verdiğin **prompt ve kod o backend'in sağlayıcısına gönderilir** — DeepSeek, Google (Gemini/Antigravity) ya da OpenAI (Codex). Her birini yalnızca bunu kabul ediyorsan kullan. Dashboard ve `*-balance` komutları local/salt-okunur; senin adına ekstra bir şey göndermez.
+- **İzole çalışma:** gerçek repo görevleri ayrı git worktree'de çalışır; agentic mod ana checkout'a/diğer branch'lere dokunmaz. Üreteni inceleyip (diff + build/test) merge etmek **sana** kalır.
 
 ## Mimari rol
 
-`claude-ds` = işçi (DeepSeek üretimi/uygulaması). Sen (Claude Code, Anthropic) = orkestratör + reviewer + git/merge sahibi.
+İşçi (DeepSeek / Gemini / Codex) = yapan (üretim/uygulama). Sen (Claude Code, Anthropic) = orkestratör + reviewer + git/merge sahibi. Bir işçinin çıktısını doğrulamadan güvenme.
 
 ## Lisans
 

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > Note: the `README.md` is in Turkish by design; this changelog and all other docs are in English.
 
+## [3.13.1] — 2026-06-28
+
+### Docs
+- **README overhaul (EN + TR).** The **Features** section was stale (DeepSeek-only) — rewritten to cover all three backends, the dashboard, native balance (aggregate + per-backend), `clean`/`clean-schedule`, the Codex real-OS sandbox, the `ds/ag/cx-runner` subagents, Markdown rendering, and stale-worker detection. Also refreshed the intro, Usage intro, Session-tracking (added the `prompt.txt` row), Security/egress (per-provider), and Architectural-role sections to be backend-neutral.
+
 ## [3.13.0] — 2026-06-28
 
 ### Added

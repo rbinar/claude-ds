@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > Note: the `README.md` is in Turkish by design; this changelog and all other docs are in English.
 
+## [3.13.4] — 2026-06-28
+
+### Fixed
+- **cx-runner / ag-runner / ds-runner: enforce delegation — babysitter must not edit files directly.** Added a CRITICAL block to all three runner agents explicitly forbidding the babysitter from using Edit, Write, `cat >`, `sed -i`, or any other direct file mutation. The worker CLI (cx-agent / ag-agent / ds-agent) must do the actual coding; the runner only invokes, monitors, verifies, and reports.
+- **cx-runner: remove bogus `--version` check.** `cx-agent` has no `--version` flag; running it would exit non-zero and mislead the agent. Prerequisite check is now `command -v cx-agent` only.
+
 ## [3.13.3] — 2026-06-28
 
 ### Changed

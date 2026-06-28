@@ -1,10 +1,10 @@
 ---
-description: Show the live status of a claude-ds session
+description: Show the live status of a cli-dispatch worker session (DeepSeek, Antigravity, or Codex)
 argument-hint: <session-id>
 allowed-tools: Bash
 ---
 
-# Watch claude-ds session: $ARGUMENTS
+# Watch cli-dispatch session: $ARGUMENTS
 
 Show the **compact** status of the given session. **Cost-conscious rule:** only the small
 `status.json` (+ the last ~15 lines of `progress.log`) is read — the raw `transcript.jsonl`
@@ -28,4 +28,4 @@ fi
 
 - `state: running` means the task is ongoing → check again later (not continuously).
 - `state: done` → look at `finalResultPreview`; the full output is in `transcript.jsonl` (if needed).
-- Follow-up task: `claude-ds-stream --resume $ARGUMENTS -p "<follow-up>"`.
+- Continue the session: `/cli-dispatch:resume <id> <follow-up>` (auto-detects backend).

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > Note: the `README.md` is in Turkish by design; this changelog and all other docs are in English.
 
+## [3.14.0] — 2026-06-29
+
+### Added
+- `/cli-dispatch:doctor` — full health check command: verifies all 6 CLIs on PATH, API keys, auth state; green ✓ / red ✗ per item; includes explicit `~/.local/bin` PATH check and smoke-test hint.
+- `/cli-dispatch:kill <session-id>` — stop a running worker session: sends SIGTERM via `pgrep -f <session-id>` and marks `status.json` state as `killed`.
+- `/cli-dispatch:help` — one-screen grouped command cheat sheet (Setup, Delegate, Monitor, Housekeeping).
+- `/cli-dispatch:resume <session-id> <prompt>` — continue any worker session with a follow-up; auto-detects backend (DeepSeek / Antigravity / Codex) from `status.json`.
+
+### Fixed
+- `ds-worktree-run.sh` / `ag-worktree-run.sh`: removed `|| true` from worker call (crash now propagates to babysitter); added `trap _cleanup ERR INT TERM` to remove leaked worktrees on crash or signal.
+- `watch.md`: removed stale "claude-ds" branding — the command works for all backends (DeepSeek, Antigravity, Codex); updated follow-up hint to `/cli-dispatch:resume`.
+
 ## [3.13.4] — 2026-06-28
 
 ### Fixed

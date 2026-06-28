@@ -11,12 +11,14 @@ WT="$(mktemp -d /tmp/ds-wt-XXXXXX)"
 rmdir "$WT"
 git -C "$REPO" fetch origin main >/dev/null 2>&1 || true
 git -C "$REPO" worktree add -b "$BRANCH" "$WT" origin/main
+_cleanup() { rm -f "$WT/node_modules" 2>/dev/null; git -C "$REPO" worktree remove "$WT" --force 2>/dev/null; git -C "$REPO" worktree prune 2>/dev/null; }
+trap _cleanup ERR INT TERM
 if [ -d "$REPO/node_modules" ] && [ ! -e "$WT/node_modules" ]; then
   ln -s "$REPO/node_modules" "$WT/node_modules"
 fi
 echo ">>> Running claude-ds-stream (agentic, session-tracked) in $WT ..."
 # Stream variant: progress/status/transcript are written to a session dir (path on stderr).
-claude-ds-stream --cwd "$WT" --dangerously-skip-permissions -p "$(cat "$BRIEF")" || true
+claude-ds-stream --cwd "$WT" --dangerously-skip-permissions -p "$(cat "$BRIEF")"
 echo ">>> Worktree: $WT  (branch: $BRANCH)"
 echo ">>> Review the diff, then YOU handle git/PR/merge. Cleanup:"
 echo "    rm -f \"$WT/node_modules\"; git -C \"$REPO\" worktree remove \"$WT\" --force; git -C \"$REPO\" worktree prune"

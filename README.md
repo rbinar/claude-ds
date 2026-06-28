@@ -12,6 +12,8 @@ Claude Code's built-in `Agent`/subagent tool only supports Anthropic models (son
 
 ![cli-dispatch demo — start Claude Code in your project, then: install, /cli-dispatch:setup, delegate via /cli-dispatch:ds-run and the ds/ag/cx-runner subagents, check usage](assets/demo.gif)
 
+![cli-dispatch dashboard — live session list, subagent drill-down (ds/ag/cx-runner), worker session trace per backend](assets/dashboard.gif)
+
 ## Install
 
 > ⚠️ These commands are **slash commands** and must be run **from inside the Claude Code CLI** (not in a normal terminal/shell). First type `claude` to start a Claude Code session, then enter the commands at that session's prompt.

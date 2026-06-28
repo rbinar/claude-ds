@@ -12,6 +12,8 @@ Claude Code'un yerleşik `Agent`/subagent tool'u yalnızca Anthropic modellerini
 
 ![cli-dispatch demo — projende Claude Code başlat, sonra: install, /cli-dispatch:setup, /cli-dispatch:ds-run ve ds/ag/cx-runner subagent ile delege et, kullanımı gör](assets/demo.gif)
 
+![cli-dispatch dashboard — canlı session listesi, subagent detayı (ds/ag/cx-runner), backend başına işçi session izi](assets/dashboard.gif)
+
 ## Kurulum
 
 > ⚠️ Bu komutlar **slash komutudur** ve **Claude Code CLI'ın içinden** çalıştırılmalıdır (normal terminal/shell'de değil). Önce `claude` yazıp Claude Code oturumunu başlat, komutları o oturumun prompt'una gir.

@@ -521,7 +521,7 @@ function chipHtml(a){const t=fmtTime(a.startedAt);return '<span class="sa'+(a.ac
 async function openSession(s){
   sel=s.id; mode='cc'
   document.getElementById('crumb').innerHTML='<a onclick="back()">sessions</a> › '+esc(s.id.slice(0,8))+' <span class="muted">('+esc(s.status)+')</span>'
-  const prevPanel=document.querySelector('#view details.restpanel'); const subsOpen=prevPanel?prevPanel.open:true
+  const prevPanel=document.querySelector('#view details.restpanel'); const subsOpen=prevPanel?prevPanel.open:false
   const v=document.getElementById('view'); v.className=''; v.innerHTML='loading…'
   const [flow,subs]=await Promise.all([j('/api/session/'+s.id+'/flow'),j('/api/session/'+s.id+'/subagents')])
   window._cur={type:'session',id:s.id}

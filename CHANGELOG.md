@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > Note: the `README.md` is in Turkish by design; this changelog and all other docs are in English.
 
+## [3.11.1] — 2026-06-28
+
+### Changed
+- **Dashboard: the inactive "Subagents" panel now starts collapsed.** The session view's non-active subagents panel defaulted to open; it now defaults to closed (the "Active subagents" panel stays open). A manual toggle is still preserved across live refreshes.
+
 ## [3.11.0] — 2026-06-28
 
 ### Added

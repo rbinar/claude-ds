@@ -23,8 +23,9 @@
 //   AG_RESUME        ("1" → append to transcript/progress, keep existing meta)
 //   AG_PROGRESS_STDERR ("1" → mirror each progress line to stderr too, for ag-agent)
 
-import { writeFileSync, readFileSync, existsSync, mkdirSync, openSync, writeSync, closeSync, statSync, readSync } from 'node:fs'
+import { readFileSync, existsSync, mkdirSync, statSync, readSync } from 'node:fs'
 import path from 'node:path'
+import { writeMetaFile, createStatusWriter, openSessionFiles, humanSize, clip } from './parse-utils.mjs'
 
 const dir = process.env.AG_SESSION_DIR
 const transcriptPath = process.env.AG_TRANSCRIPT
@@ -61,16 +62,14 @@ meta = {
   exitCode: null,
   error: undefined,
 }
-const writeMeta = () => { try { writeFileSync(metaFile, JSON.stringify(meta, null, 2) + '\n') } catch { /* ignore */ } }
+const writeMeta = () => writeMetaFile(metaFile, meta)
 writeMeta()
 
-let transcriptFd = -1, progressFd = -1
-try { transcriptFd = openSync(transcriptFile, isResume ? 'a' : 'w') } catch { /* ignore */ }
-try { progressFd = openSync(progressFile, isResume ? 'a' : 'w') } catch { /* ignore */ }
-const writeTranscript = (s) => { if (transcriptFd >= 0) { try { writeSync(transcriptFd, s) } catch { /* ignore */ } } }
-if (isResume && progressFd >= 0) {
-  try { writeSync(progressFd, `\n--- resume @ ${new Date().toISOString()} ---\n`) } catch { /* ignore */ }
-}
+const progressToStderr = process.env.AG_PROGRESS_STDERR === '1'
+const { writeTranscript, appendProgress, closeAll } = openSessionFiles(
+  transcriptFile, progressFile, isResume,
+  { progressToStderr }
+)
 
 // ---- rolling state ----
 const status = {
@@ -85,36 +84,10 @@ const status = {
   lastActivityAt: new Date().toISOString(),
   finalResultPreview: '',
 }
-const STATUS_THROTTLE_MS = 200
-let lastStatusWrite = 0
-let statusTimer = null
-const flushStatus = () => {
-  if (statusTimer) { clearTimeout(statusTimer); statusTimer = null }
-  lastStatusWrite = Date.now()
-  try { writeFileSync(statusFile, JSON.stringify(status, null, 2) + '\n') } catch { /* ignore */ }
-}
-const writeStatus = () => {
-  const since = Date.now() - lastStatusWrite
-  if (since >= STATUS_THROTTLE_MS) { flushStatus(); return }
-  if (!statusTimer) {
-    statusTimer = setTimeout(flushStatus, STATUS_THROTTLE_MS - since)
-    statusTimer.unref?.()
-  }
-}
+const { flush: flushStatus, write: writeStatus } = createStatusWriter(statusFile, status)
 flushStatus()
 
-const progressToStderr = process.env.AG_PROGRESS_STDERR === '1'
-const appendProgress = (line) => {
-  if (progressFd >= 0) { try { writeSync(progressFd, line + '\n') } catch { /* ignore */ } }
-  if (progressToStderr) { try { process.stderr.write(line + '\n') } catch { /* ignore */ } }
-}
-
-const humanSize = (n) => {
-  if (n < 1024) return `${n}b`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}kb`
-  return `${(n / 1024 / 1024).toFixed(1)}mb`
-}
-const clip = (s, n) => { const o = String(s).replace(/\s+/g, ' ').trim(); return o.length > n ? o.slice(0, n) + '…' : o }
+// humanSize, clip — imported from parse-utils.mjs
 const touch = () => { status.lastActivityAt = new Date().toISOString(); status.events++ }
 
 let finalText = ''        // last PLANNER_RESPONSE content (the running/final answer)
@@ -187,8 +160,7 @@ function drain() {
 
 function finalize() {
   drain() // last read
-  if (transcriptFd >= 0) { try { closeSync(transcriptFd) } catch { /* ignore */ } transcriptFd = -1 }
-  if (progressFd >= 0) { try { closeSync(progressFd) } catch { /* ignore */ } progressFd = -1 }
+  closeAll()
   // Done sentinel content = exit reason: "0" (ok) | "<n>" (agy exit n) | "timeout: …"
   let done = ''
   try { done = readFileSync(doneFile, 'utf8').trim() } catch { /* ignore */ }

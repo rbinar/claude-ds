@@ -16,8 +16,9 @@
 //   CLAUDE_DS_PROMPT_PREVIEW, CLAUDE_DS_CWD, CLAUDE_DS_BRANCH, CLAUDE_DS_MODEL
 //   CLAUDE_DS_RESUME        ("1" → append to transcript/progress, keep existing meta)
 
-import { writeFileSync, readFileSync, existsSync, mkdirSync, openSync, writeSync, closeSync } from 'node:fs'
+import { readFileSync, existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
+import { writeMetaFile, createStatusWriter, openSessionFiles, humanSize } from './parse-utils.mjs'
 
 const dir = process.env.CLAUDE_DS_SESSION_DIR
 if (!dir) {
@@ -52,20 +53,15 @@ meta = {
   // this run only if claude exits nonzero again. (undefined → omitted by JSON.stringify)
   error: undefined,
 }
-const writeMeta = () => { try { writeFileSync(metaFile, JSON.stringify(meta, null, 2) + '\n') } catch { /* ignore */ } }
+const writeMeta = () => writeMetaFile(metaFile, meta)
 writeMeta()
 
-// Hold ONE append fd each for the transcript and the progress log. appendFileSync re-opens
-// and closes the file on every call (~3 syscalls), which dominates runtime on large or
-// tool-heavy streams. writeSync to a held fd still updates mtime, so the idle-timeout
-// watchdog (which keys off transcript.jsonl) keeps working.
-let transcriptFd = -1, progressFd = -1
-try { transcriptFd = openSync(transcriptFile, isResume ? 'a' : 'w') } catch { /* ignore */ }
-try { progressFd = openSync(progressFile, isResume ? 'a' : 'w') } catch { /* ignore */ }
-const writeTranscript = (s) => { if (transcriptFd >= 0) { try { writeSync(transcriptFd, s) } catch { /* ignore */ } } }
-if (isResume && progressFd >= 0) {
-  try { writeSync(progressFd, `\n--- resume @ ${new Date().toISOString()} ---\n`) } catch { /* ignore */ }
-}
+// FD management: delegated to parse-utils openSessionFiles (held append fds, resume marker).
+const progressToStderr = process.env.CLAUDE_DS_PROGRESS_STDERR === '1'
+const { writeTranscript, appendProgress, closeAll } = openSessionFiles(
+  transcriptFile, progressFile, isResume,
+  { progressToStderr }
+)
 
 // ---- rolling state ----
 const status = {
@@ -78,25 +74,8 @@ const status = {
   lastActivityAt: new Date().toISOString(),
   finalResultPreview: '',
 }
-// status.json is a polled snapshot — it needn't hit disk on every event. Throttle the
-// full-file rewrites to ~200ms (coalescing bursts of tool events); finalize forces a final
-// write. Idle detection keys off transcript.jsonl, not this file, so throttling is safe.
-const STATUS_THROTTLE_MS = 200
-let lastStatusWrite = 0
-let statusTimer = null
-const flushStatus = () => {
-  if (statusTimer) { clearTimeout(statusTimer); statusTimer = null }
-  lastStatusWrite = Date.now()
-  try { writeFileSync(statusFile, JSON.stringify(status, null, 2) + '\n') } catch { /* ignore */ }
-}
-const writeStatus = () => {
-  const since = Date.now() - lastStatusWrite
-  if (since >= STATUS_THROTTLE_MS) { flushStatus(); return }
-  if (!statusTimer) {
-    statusTimer = setTimeout(flushStatus, STATUS_THROTTLE_MS - since)
-    statusTimer.unref?.()
-  }
-}
+// status.json throttled writes — delegated to parse-utils createStatusWriter.
+const { flush: flushStatus, write: writeStatus } = createStatusWriter(statusFile, status)
 flushStatus() // initial snapshot, written immediately
 
 const emittedToolUseIds = new Set()
@@ -105,14 +84,7 @@ let finalText = ''
 let streamedText = ''
 let pendingText = '' // coalesced streamed text; flushed as a single terse progress line
 
-// When CLAUDE_DS_PROGRESS_STDERR=1, mirror each progress line to stderr too — lets a
-// synchronous caller (ds-agent) show live tool activity while the worker runs, without
-// touching stdout (which carries only the final answer).
-const progressToStderr = process.env.CLAUDE_DS_PROGRESS_STDERR === '1'
-const appendProgress = (line) => {
-  if (progressFd >= 0) { try { writeSync(progressFd, line + '\n') } catch { /* ignore */ } }
-  if (progressToStderr) { try { process.stderr.write(line + '\n') } catch { /* ignore */ } }
-}
+// appendProgress — from openSessionFiles above (mirrors to stderr when CLAUDE_DS_PROGRESS_STDERR=1)
 
 // Flush streamed text to progress.log as a single truncated line (cost-conscious).
 const flushPending = () => {
@@ -136,11 +108,7 @@ const inputPreview = (input) => {
   } catch { return '' }
 }
 
-const humanSize = (n) => {
-  if (n < 1024) return `${n}b`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}kb`
-  return `${(n / 1024 / 1024).toFixed(1)}mb`
-}
+// humanSize — imported from parse-utils.mjs
 
 const touch = () => { status.lastActivityAt = new Date().toISOString(); status.events++ }
 
@@ -240,9 +208,8 @@ function finalize(code) {
     try { handleEvent(JSON.parse(lineBuf)) } catch { /* ignore */ }
     lineBuf = ''
   }
-  if (transcriptFd >= 0) { try { closeSync(transcriptFd) } catch { /* ignore */ } transcriptFd = -1 }
+  closeAll()
   flushPending()
-  if (progressFd >= 0) { try { closeSync(progressFd) } catch { /* ignore */ } progressFd = -1 }
   const out = finalText || streamedText
   status.state = out ? 'done' : (code === 0 ? 'done' : 'error')
   status.finalResultPreview = (out || '').replace(/\s+/g, ' ').slice(0, 300)

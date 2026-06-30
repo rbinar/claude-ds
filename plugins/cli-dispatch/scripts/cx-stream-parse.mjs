@@ -19,8 +19,9 @@
 //   CX_RESUME        ("1" → append to transcript/progress, keep existing meta)
 //   CX_PROGRESS_STDERR ("1" → mirror each progress line to stderr too, for cx-agent)
 
-import { writeFileSync, readFileSync, existsSync, mkdirSync, openSync, writeSync, closeSync } from 'node:fs'
+import { readFileSync, existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
+import { writeMetaFile, createStatusWriter, openSessionFiles, clip } from './parse-utils.mjs'
 
 const dir = process.env.CX_SESSION_DIR
 if (!dir) {
@@ -57,18 +58,15 @@ meta = {
   // codex fails again. (undefined → omitted by JSON.stringify)
   error: undefined,
 }
-const writeMeta = () => { try { writeFileSync(metaFile, JSON.stringify(meta, null, 2) + '\n') } catch { /* ignore */ } }
+const writeMeta = () => writeMetaFile(metaFile, meta)
 writeMeta()
 
-// Hold ONE append fd each for the transcript and the progress log (avoids the per-call
-// open/close cost of appendFileSync on tool-heavy streams).
-let transcriptFd = -1, progressFd = -1
-try { transcriptFd = openSync(transcriptFile, isResume ? 'a' : 'w') } catch { /* ignore */ }
-try { progressFd = openSync(progressFile, isResume ? 'a' : 'w') } catch { /* ignore */ }
-const writeTranscript = (s) => { if (transcriptFd >= 0) { try { writeSync(transcriptFd, s) } catch { /* ignore */ } } }
-if (isResume && progressFd >= 0) {
-  try { writeSync(progressFd, `\n--- resume @ ${new Date().toISOString()} ---\n`) } catch { /* ignore */ }
-}
+// FD management: delegated to parse-utils openSessionFiles (held append fds, resume marker).
+const progressToStderr = process.env.CX_PROGRESS_STDERR === '1'
+const { writeTranscript, appendProgress, closeAll } = openSessionFiles(
+  transcriptFile, progressFile, isResume,
+  { progressToStderr }
+)
 
 // ---- rolling state ----
 const status = {
@@ -84,31 +82,12 @@ const status = {
   finalResultPreview: '',
   usage: null,
 }
-const STATUS_THROTTLE_MS = 200
-let lastStatusWrite = 0
-let statusTimer = null
-const flushStatus = () => {
-  if (statusTimer) { clearTimeout(statusTimer); statusTimer = null }
-  lastStatusWrite = Date.now()
-  try { writeFileSync(statusFile, JSON.stringify(status, null, 2) + '\n') } catch { /* ignore */ }
-}
-const writeStatus = () => {
-  const since = Date.now() - lastStatusWrite
-  if (since >= STATUS_THROTTLE_MS) { flushStatus(); return }
-  if (!statusTimer) {
-    statusTimer = setTimeout(flushStatus, STATUS_THROTTLE_MS - since)
-    statusTimer.unref?.()
-  }
-}
+// status.json throttled writes — delegated to parse-utils createStatusWriter.
+const { flush: flushStatus, write: writeStatus } = createStatusWriter(statusFile, status)
 flushStatus() // initial snapshot, written immediately
 
-const progressToStderr = process.env.CX_PROGRESS_STDERR === '1'
-const appendProgress = (line) => {
-  if (progressFd >= 0) { try { writeSync(progressFd, line + '\n') } catch { /* ignore */ } }
-  if (progressToStderr) { try { process.stderr.write(line + '\n') } catch { /* ignore */ } }
-}
-
-const clip = (s, n) => { const o = String(s).replace(/\s+/g, ' ').trim(); return o.length > n ? o.slice(0, n) + '…' : o }
+// appendProgress — from openSessionFiles above (mirrors to stderr when CX_PROGRESS_STDERR=1)
+// clip — imported from parse-utils.mjs
 const touch = () => { status.lastActivityAt = new Date().toISOString(); status.events++ }
 
 let finalText = ''        // last agent_message text (the running/final answer)
@@ -261,8 +240,7 @@ function finalize(code) {
     try { handleEvent(JSON.parse(lineBuf)) } catch { /* ignore */ }
     lineBuf = ''
   }
-  if (transcriptFd >= 0) { try { closeSync(transcriptFd) } catch { /* ignore */ } transcriptFd = -1 }
-  if (progressFd >= 0) { try { closeSync(progressFd) } catch { /* ignore */ } progressFd = -1 }
+  closeAll()
   const out = finalText
   // errorText is AUTHORITATIVE: a turn-level error (turn.failed / top-level error /
   // item.type:"error") means the turn failed even if codex's process exited 0 and even

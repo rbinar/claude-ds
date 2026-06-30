@@ -24,6 +24,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/stream-utils.sh"
 
 command -v codex >/dev/null 2>&1 || {
   echo "cx-stream: 'codex' (OpenAI Codex CLI) not found in PATH." >&2
@@ -33,12 +34,7 @@ command -v codex >/dev/null 2>&1 || {
 command -v node >/dev/null 2>&1 || { echo "cx-stream: 'node' not found (required for the stream parser)." >&2; exit 1; }
 
 # Optional config (shared across backends). cli-dispatch dir, legacy claude-ds fallback (env wins).
-CONFIG="${CLI_DISPATCH_CONFIG:-${CLAUDE_DS_CONFIG:-}}"
-[ -n "$CONFIG" ] || { CONFIG="$HOME/.config/cli-dispatch/config"; [ -f "$CONFIG" ] || [ ! -f "$HOME/.config/claude-ds/config" ] || CONFIG="$HOME/.config/claude-ds/config"; }
-if [ -f "$CONFIG" ]; then
-  # shellcheck disable=SC1090
-  . "$CONFIG"
-fi
+source_config
 
 # Resolve the parser: env > installed location > script dir.
 PARSER="${CX_PARSER:-}"
@@ -143,8 +139,7 @@ fi
 # ---- session bookkeeping ----
 # The thread/session id is only known once codex emits thread.started. Until then we run in a
 # TEMP session dir; the parser captures the thread id and we relocate to the canonical dir.
-SESSIONS_ROOT="${CLI_DISPATCH_SESSIONS_DIR:-${CLAUDE_DS_SESSIONS_DIR:-}}"
-[ -n "$SESSIONS_ROOT" ] || { _c="${XDG_CACHE_HOME:-$HOME/.cache}"; SESSIONS_ROOT="$_c/cli-dispatch/sessions"; [ -d "$SESSIONS_ROOT" ] || [ ! -d "$_c/claude-ds/sessions" ] || SESSIONS_ROOT="$_c/claude-ds/sessions"; }
+SESSIONS_ROOT="$(resolve_sessions_root)"
 mkdir -p "$SESSIONS_ROOT"
 if [ "$RESUME" -eq 1 ]; then
   SESSION_ID="$RESUME_ID"
@@ -156,32 +151,8 @@ mkdir -p "$SESSION_DIR"
 printf '%s' "$PROMPT" > "$SESSION_DIR/prompt.txt" 2>/dev/null || true
 BRANCH="$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 
-# ---- process helpers (defined before launch; the watchdog reuses them) ----
-mtime_of() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
-
-kill_tree() {
-  local pid="$1" sig="${2:--TERM}" child
-  for child in $(pgrep -P "$pid" 2>/dev/null); do kill_tree "$child" "$sig"; done
-  kill "$sig" "$pid" 2>/dev/null || true
-}
-
-# Snapshot a pid + all descendants (newline-separated, numeric → safe to word-split).
-proc_tree() {
-  local pid="$1" child
-  for child in $(pgrep -P "$pid" 2>/dev/null); do proc_tree "$child"; done
-  printf '%s\n' "$pid"
-}
-
-# Hard-kill the codex subtree. macOS has NO `timeout` binary, so we manage the tree
-# ourselves: snapshot the subtree FIRST, TERM it (graceful), then KILL the SAME captured
-# pids (survives reparenting). (bash-3.2 safe: no mapfile.)
-kill_worker() {
-  local root="$1" tree p
-  tree="$(proc_tree "$root")"
-  for p in $tree; do kill -TERM "$p" 2>/dev/null || true; done
-  sleep 3
-  for p in $tree; do kill -KILL "$p" 2>/dev/null || true; done
-}
+# Process helpers: mtime_of, kill_tree, proc_tree, kill_worker — defined in stream-utils.sh
+# (sourced above). Defined before launch; the watchdog reuses them.
 
 echo "cx-stream → Codex (OpenAI Codex CLI) worker" >&2
 echo "  cwd:     $CWD" >&2
